@@ -3,17 +3,16 @@ const Cell = @import("cell.zig").Cell;
 const CellContainer = @import("cell.zig").CellContainer;
 const CsvError = error{
     IncorrectNumberOfCells,
+    CouldNotReadPath,
 };
 
 // this file is responsible for reading the given CSV file and return a CellContainer with all the given data in it.
 //
-pub fn read_cells_from_csv_file(allocator: *std.mem.Allocator) !CellContainer {
-    const path = "/Users/dkRaHySa/Desktop/programs/rs-sheets/assets/test.csv";
+pub fn read_cells_from_csv_file(allocator: *std.mem.Allocator, path: []const u8) !CellContainer {
     const file = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
     const contents = try file.readToEndAlloc(allocator.*, 1024);
     defer allocator.free(contents);
 
-    std.debug.print("Contents: {s}", .{contents});
     return try parse_contents(contents, allocator);
 }
 
@@ -81,7 +80,12 @@ pub fn write_cells_to_csv_file(allocator: *std.mem.Allocator, cells: CellContain
         highest_x_found = @max(cell.x, highest_x_found);
         highest_y_found = @max(cell.y, highest_y_found);
     }
-    const path = "/Users/dkRaHySa/Desktop/programs/rs-sheets/assets/test.csv";
+    var args = std.process.args();
+    _ = args.skip();
+    const path = args.next() orelse {
+        std.debug.print("Failed to save file", .{});
+        return CsvError.CouldNotReadPath;
+    };
     const file = try std.fs.openFileAbsolute(path, .{ .mode = .write_only });
 
     var file_contents = std.ArrayList(u8).init(allocator.*);
@@ -105,9 +109,7 @@ fn insert_escape_characters(value: []const u8, dest_buffer: []u8) []u8 {
     // for now, we wrap every cell in quotes, since that will always work although less efficient.
     // "     => ""
     // value => "value"
-    std.debug.print("'{s}'\n", .{dest_buffer});
     const replacements = std.mem.replace(u8, value, "\"", "\"\"", dest_buffer);
-    std.debug.print("'{s}'\n", .{dest_buffer});
     const replaced_size = value.len + replacements; // each replacement introduces one new character
 
     var index: usize = replaced_size + 1;

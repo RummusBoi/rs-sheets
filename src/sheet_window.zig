@@ -5,6 +5,7 @@ pub const c = @cImport({
 });
 pub const std = @import("std");
 const constants = @import("constants.zig");
+const font_file_content = @embedFile("assets/fonts/NaturalMono-Regular.ttf");
 const CacheError = error{
     CouldNotCache,
 };
@@ -37,17 +38,37 @@ pub const SheetWindow = struct {
     allocator: *std.mem.Allocator,
 
     pub fn init(width: u32, height: u32, allocator: *std.mem.Allocator) !SheetWindow {
-        _ = c.SDL_Init(c.SDL_INIT_EVERYTHING);
-
+        // const before_sdl_init = std.time.milliTimestamp();
+        _ = c.SDL_Init(c.SDL_INIT_VIDEO);
+        // const before_ttf_init = std.time.milliTimestamp();
         _ = c.TTF_Init();
+        // const after_ttf_init = std.time.milliTimestamp();
+
+        // std.debug.print("SDL init: {}\n", .{before_ttf_init - before_sdl_init});
+        // std.debug.print("TTF init: {}\n", .{after_ttf_init - before_ttf_init});
         // _ = c.SDL_RecordGesture(-1);
 
-        const font: *c.TTF_Font = c.TTF_OpenFont("assets/fonts/NaturalMono-Regular.ttf", 13) orelse sdl_panic("Loading font");
+        // const before_font_load = std.time.milliTimestamp();
+        const rw_ops = c.SDL_RWFromConstMem(font_file_content, font_file_content.len) orelse sdl_panic("Interpreting font");
+        const font: *c.TTF_Font = c.TTF_OpenFontRW(rw_ops, 1, 13) orelse sdl_panic("Loading font");
+        // const after_font_load = std.time.milliTimestamp();
+
+        // std.debug.print("Loading font: {}\n", .{after_font_load - before_font_load});
+
         const font_color: c.SDL_Color = .{ .r = 255, .g = 255, .b = 255 };
+        // const before_create_window = std.time.milliTimestamp();
         const win = c.SDL_CreateWindow("RS Sheets", c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED, @intCast(width), @intCast(height), 0) orelse sdl_panic("Creating window");
+        // const after_create_window = std.time.milliTimestamp();
+
+        // std.debug.print("Creating window: {}\n", .{after_create_window - before_create_window});
 
         c.SDL_SetWindowResizable(win, 1);
+        // const before_create_renderer = std.time.milliTimestamp();
         const renderer = c.SDL_CreateRenderer(win, 0, c.SDL_RENDERER_ACCELERATED | c.SDL_RENDERER_PRESENTVSYNC) orelse sdl_panic("Creating renderer");
+        // const after_create_renderer = std.time.milliTimestamp();
+
+        // std.debug.print("Creating renderer: {}\n", .{after_create_renderer - before_create_renderer});
+
         if (c.SDL_SetRenderDrawBlendMode(renderer, c.SDL_BLENDMODE_BLEND) != 0) {
             sdl_panic("Setting blend mode.");
         }
@@ -80,7 +101,6 @@ pub const SheetWindow = struct {
     }
 
     fn cache_texture(self: *SheetWindow, texture: *c.SDL_Texture, value: []const u8, key: []const u8) !void {
-        std.debug.print("Caching texture for {s}\n", .{value});
         const value_arr = try self.allocator.alloc(u8, value.len);
         const key_arr = try self.allocator.alloc(u8, key.len);
         std.mem.copyForwards(u8, value_arr, value);
@@ -116,7 +136,6 @@ pub const SheetWindow = struct {
         }
         const texture_key = if (highlight) "label-highlight" else "label";
         const texture = self.find_cached_texture_for_value(value, texture_key) orelse blk: {
-            std.debug.print("Could not find texture for value {s}\n", .{value});
             const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };
 
             const surface = c.TTF_RenderText_Shaded(self.font, c_str, font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
@@ -163,7 +182,6 @@ pub const SheetWindow = struct {
         const texture_key = if (highlight) "label-highlight" else "label";
 
         const texture = self.find_cached_texture_for_value(value, texture_key) orelse blk: {
-            std.debug.print("Could not find texture for value {s}\n", .{value});
             const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };
 
             const surface = c.TTF_RenderText_Shaded(self.font, c_str, font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
@@ -209,7 +227,6 @@ pub const SheetWindow = struct {
         }
         if (value.len > 0) {
             const texture = self.find_cached_texture_for_value(value, "cell") orelse blk: {
-                std.debug.print("Could not find texture for value {s}\n", .{value});
                 const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };
 
                 const surface = c.TTF_RenderText_Shaded(self.font, c_str, font_color, .{ .a = 255, .r = 255, .g = 255, .b = 255 });
