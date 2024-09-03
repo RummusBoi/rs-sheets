@@ -52,8 +52,8 @@ pub fn main() !void {
     // cells[2] = .{ .x = 5, .y = 5, .value = "hejsa v3" };
     var prev_frame = std.time.nanoTimestamp();
     var next_frame = prev_frame + time_per_frame;
-    var prev_frame_wheel_x: ?i32 = null;
-    var prev_frame_wheel_y: ?i32 = null;
+    var prev_frame_wheel_x: f64 = 0;
+    var prev_frame_wheel_y: f64 = 0;
 
     var selected_cell: ?sheet.CellCoords = null;
     var selected_area: ?sheet.Area = null;
@@ -68,6 +68,7 @@ pub fn main() !void {
 
     while (true) {
         if (!is_first_frame) {
+            std.debug.print("Cells: {}\n", .{cells._cells.items.len});
             const sleep_time = @max(next_frame - std.time.nanoTimestamp(), 0);
 
             std.time.sleep(@intCast(sleep_time));
@@ -88,13 +89,30 @@ pub fn main() !void {
                         sheet_window.c.SDL_Quit();
                         return;
                     },
-                    sheet_window.c.SDL_MOUSEWHEEL => {
+                    sheet_window.c.SDL_MOUSEWHEEL => blk: {
                         get_mousewheel_event = true;
-                        state.x += @divTrunc((prev_frame_wheel_x orelse 0) + (event.wheel.x + event.wheel.x * @as(i32, @intCast(@abs(event.wheel.x)))), 2);
-                        state.y -= @divTrunc((prev_frame_wheel_y orelse 0) + (event.wheel.y + event.wheel.y * @as(i32, @intCast(@abs(event.wheel.y)))), 2);
+                        // state.x += @divTrunc((prev_frame_wheel_x orelse 0) + (event.wheel.x + event.wheel.x * @as(i32, @intCast(@abs(event.wheel.x)))), 2);
+                        // state.y -= @divTrunc((prev_frame_wheel_y orelse 0) + (event.wheel.y + event.wheel.y * @as(i32, @intCast(@abs(event.wheel.y)))), 2);
+                        // const x_sign: f32 = if (event.wheel.x > 0) 1 else -1;
+                        // const y_sign: f32 = if (event.wheel.y > 0) 1 else -1;
+                        const preciseX = @as(f64, @floatCast(event.wheel.preciseX + prev_frame_wheel_x)) / 2;
+                        const preciseY = @as(f64, @floatCast(event.wheel.preciseY + prev_frame_wheel_y)) / 2;
+                        prev_frame_wheel_x = preciseX;
+                        prev_frame_wheel_y = preciseY;
+                        const total_vel = std.math.sqrt(preciseX * preciseX + preciseY * preciseY);
+                        const scaled_vel = @abs(5 * total_vel + 2 * @abs(std.math.pow(f64, total_vel, 2)));
+                        std.debug.print("Total vel: {}\n", .{total_vel});
+                        std.debug.print("Scaled vel: {}\n", .{scaled_vel});
+                        if (scaled_vel < 0.0001) {
+                            break :blk;
+                        }
+                        // const angle = std.math.tan(preciseX / preciseY);
+                        const scale_factor = @abs(scaled_vel / total_vel);
 
-                        prev_frame_wheel_x = event.wheel.x;
-                        prev_frame_wheel_y = event.wheel.y;
+                        const x_vel: i32 = @intFromFloat(scale_factor * preciseX);
+                        const y_vel: i32 = @intFromFloat(scale_factor * preciseY);
+                        state.x += x_vel;
+                        state.y -= y_vel;
 
                         // scroll_vel_x = @floatFromInt(-event.wheel.x);
                         // scroll_vel_y = @floatFromInt(event.wheel.y);
@@ -103,9 +121,23 @@ pub fn main() !void {
                         if (event.button.button == sheet_window.c.SDL_BUTTON_LEFT) {
                             left_button_is_down = true;
                             const maybe_cell = sheet.pixel_to_cell(event.button.x, event.button.y, &state);
+
                             if (maybe_cell) |cell| {
-                                selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = 1 };
-                                selected_cell = null;
+                                if (is_holding_shift and selected_cell != null) {
+                                    var w = cell.x - selected_cell.?.x;
+                                    var h = cell.y - selected_cell.?.y;
+                                    w += if (w > 0) 1 else -1;
+                                    h += if (h > 0) 1 else -1;
+                                    selected_area = .{ .x = selected_cell.?.x, .y = selected_cell.?.y, .w = w, .h = h };
+                                    selected_cell = null;
+                                } else {
+                                    _ = cells.ensure_cell(cell.x, cell.y) catch {
+                                        std.debug.print("Failed when ensuring cell", .{});
+                                        continue;
+                                    };
+                                    selected_cell = .{ .x = cell.x, .y = cell.y };
+                                    selected_area = null;
+                                }
                                 // selected_cell = .{ .x = cell.x, .y = cell.y };
                             }
                         }
@@ -140,6 +172,13 @@ pub fn main() !void {
                                     if (area.w != 1 or area.h != 1) {
                                         selected_cell = null;
                                     }
+                                } else if (selected_cell) |cell| {
+                                    var w = mouse_cell.x - cell.x;
+                                    var h = mouse_cell.y - cell.y;
+                                    w += if (w > 0) 1 else -1;
+                                    h += if (h > 0) 1 else -1;
+                                    selected_area = .{ .x = cell.x, .y = cell.y, .w = w, .h = h };
+                                    selected_cell = null;
                                 }
                             }
                         }
@@ -308,9 +347,15 @@ pub fn main() !void {
                             }
                         } else if (scancode == sheet_window.c.SDL_SCANCODE_S) {
                             if (is_holding_cmd) {
+                                const start_save = std.time.microTimestamp();
                                 write_cells_to_csv_file(&allocator, cells) catch {
-                                    std.debug.print("Failed to save changes..", .{});
+                                    std.debug.print("Failed to save changes..\n", .{});
+                                    continue;
                                 };
+                                const end_save = std.time.microTimestamp();
+
+                                const in_milliseconds = @as(f32, @floatFromInt(end_save - start_save)) / @as(f32, 1000);
+                                std.debug.print("Succesfully saved to file {s} in {d:.2}ms\n", .{ filepath, in_milliseconds });
                             }
                         } else if (scancode == sheet_window.c.SDL_SCANCODE_C) {
                             if (!is_holding_cmd) continue;
@@ -371,7 +416,14 @@ pub fn main() !void {
                         } else if (scancode == sheet_window.c.SDL_SCANCODE_V) blk: {
                             if (is_holding_cmd) {
                                 std.debug.print("pasting", .{});
-                                if (selected_cell) |cell_coords| {
+                                const maybe_cell_coords = block: {
+                                    if (selected_cell) |cell| break :block cell;
+                                    if (selected_area) |area| {
+                                        break :block sheet.CellCoords{ .x = area.x, .y = area.y };
+                                    }
+                                    break :block null;
+                                };
+                                if (maybe_cell_coords) |cell_coords| {
                                     const clipboard = sheet_window.c.SDL_GetClipboardText();
                                     defer sheet_window.c.SDL_free(clipboard);
 

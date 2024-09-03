@@ -39,7 +39,7 @@ pub const SheetWindow = struct {
 
     pub fn init(width: u32, height: u32, allocator: *std.mem.Allocator) !SheetWindow {
         // const before_sdl_init = std.time.milliTimestamp();
-        _ = c.SDL_Init(c.SDL_INIT_VIDEO);
+        _ = c.SDL_Init(c.SDL_INIT_EVERYTHING);
         // const before_ttf_init = std.time.milliTimestamp();
         _ = c.TTF_Init();
         // const after_ttf_init = std.time.milliTimestamp();
@@ -138,7 +138,7 @@ pub const SheetWindow = struct {
         const texture = self.find_cached_texture_for_value(value, texture_key) orelse blk: {
             const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };
 
-            const surface = c.TTF_RenderText_Shaded(self.font, c_str, font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
+            const surface = c.TTF_RenderText_LCD(self.font, c_str, font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
             defer c.SDL_FreeSurface(surface);
             const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse {
                 sdl_panic("Creating text texture.");

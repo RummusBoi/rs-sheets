@@ -164,13 +164,14 @@ pub const Cell = struct {
 
 pub const CellContainer = struct {
     _cells: std.ArrayList(*Cell),
+    _cell_index: std.AutoHashMap(i32, usize),
     allocator: *std.mem.Allocator,
     pub fn init(capacity: u32, allocator: *std.mem.Allocator) !CellContainer {
         const cells = try allocator.alloc(*Cell, capacity);
         var array_list = std.ArrayList(*Cell).init(allocator.*);
         try array_list.appendSlice(cells);
 
-        return CellContainer{ ._cells = array_list, .allocator = allocator };
+        return CellContainer{ ._cells = array_list, ._cell_index = std.AutoHashMap(i32, usize).init(allocator.*), .allocator = allocator };
     }
     pub fn add_cell(self: *CellContainer, x: i32, y: i32, value: []const u8) !*Cell {
         const cell = try Cell.init(self.allocator, x, y, value);
@@ -178,23 +179,21 @@ pub const CellContainer = struct {
         heap_cell.* = cell;
 
         try self._cells.append(heap_cell);
+
+        self._cell_index.put(10000 * x + y, self._cells.items.len - 1) catch |err| {
+            _ = self._cells.pop();
+            return err;
+        };
         return heap_cell;
     }
 
     pub fn remove_cell(self: *CellContainer, x: i32, y: i32) void {
-        for (self._cells.items, 0..) |cell, index| {
-            if (cell.x == x and cell.y == y) {
-                self._cells.swapRemove(index);
-            }
-        }
+        const index = self._cell_index.fetchRemove(10000 * x + y) orelse return;
+        self._cells.swapRemove(index.value);
     }
     pub fn find(self: CellContainer, x: i32, y: i32) ?*Cell {
-        for (self._cells.items) |cell| {
-            if (cell.x == x and cell.y == y) {
-                return cell;
-            }
-        }
-        return null;
+        const index = self._cell_index.get(10000 * x + y) orelse return null;
+        return self._cells.items[index];
     }
     pub fn ensure_cell(self: *CellContainer, x: i32, y: i32) !*Cell {
         if (self.find(x, y)) |existing_cell| {

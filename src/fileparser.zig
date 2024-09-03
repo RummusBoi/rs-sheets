@@ -10,7 +10,7 @@ const CsvError = error{
 //
 pub fn read_cells_from_csv_file(allocator: *std.mem.Allocator, path: []const u8) !CellContainer {
     const file = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
-    const contents = try file.readToEndAlloc(allocator.*, 1024);
+    const contents = try file.readToEndAlloc(allocator.*, 100000000); // 100mb
     defer allocator.free(contents);
 
     return try parse_contents(contents, allocator);
