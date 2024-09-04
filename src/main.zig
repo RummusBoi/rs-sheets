@@ -6,6 +6,7 @@ const window_title = "zig-gamedev: minimal zgpu zgui";
 const sheet = @import("sheet.zig");
 const Cell = @import("cell.zig").Cell;
 const CellContainer = @import("cell.zig").CellContainer;
+const get_cell_pos = @import("cell.zig").get_cell_pos;
 const find_cell = @import("cell.zig").find_cell;
 const read_cells_from_csv_file = @import("fileparser.zig").read_cells_from_csv_file;
 const write_cells_to_csv_file = @import("fileparser.zig").write_cells_to_csv_file;
@@ -63,20 +64,24 @@ pub fn main() !void {
     var is_holding_shift: bool = false;
     var is_holding_cmd: bool = false;
     var is_editing: bool = false;
+    var did_just_paste: bool = false;
 
     var is_first_frame = true;
-
-    while (true) {
+    var frame: u64 = 0;
+    while (true) : (frame += 1) {
+        var event_was_polled = false;
+        var cell_was_updated = false;
+        var frametime: i32 = 0;
         if (!is_first_frame) {
-            std.debug.print("Cells: {}\n", .{cells._cells.items.len});
+            // std.debug.print("Cells: {}\n", .{cells._cells.items.len});
             const sleep_time = @max(next_frame - std.time.nanoTimestamp(), 0);
 
             std.time.sleep(@intCast(sleep_time));
             const nanos_elapsed = std.time.nanoTimestamp() - prev_frame;
 
-            const millis_elapsed: i32 = @intFromFloat(@as(f32, @floatFromInt(nanos_elapsed)) / @as(f32, @floatFromInt(1000000)));
-            _ = millis_elapsed;
-            // std.debug.print("Frametime: {}ms\n", .{millis_elapsed});
+            frametime = @intFromFloat(@as(f32, @floatFromInt(nanos_elapsed)) / @as(f32, @floatFromInt(1000000)));
+            // _ = millis_elapsed;
+
             prev_frame = std.time.nanoTimestamp();
             next_frame = prev_frame + time_per_frame;
 
@@ -84,6 +89,8 @@ pub fn main() !void {
 
             while (sheet_window.c.SDL_PollEvent(&event) != 0) {
                 var get_mousewheel_event = false;
+                event_was_polled = true;
+
                 switch (event.type) {
                     sheet_window.c.SDL_QUIT => {
                         sheet_window.c.SDL_Quit();
@@ -184,6 +191,7 @@ pub fn main() !void {
                         }
                     },
                     sheet_window.c.SDL_TEXTINPUT => {
+                        cell_was_updated = true; // we flip the bool here to ensure that we always update
                         if (!is_editing) {
                             is_editing = true;
                             if (selected_cell) |cell_coords| {
@@ -212,6 +220,7 @@ pub fn main() !void {
                         }
                     },
                     sheet_window.c.SDL_KEYDOWN => {
+                        cell_was_updated = true; // we flip the bool here to ensure that we always update
                         const keycode = event.key.keysym.sym;
 
                         if (keycode == sheet_window.c.SDLK_ESCAPE) {
@@ -415,6 +424,7 @@ pub fn main() !void {
                             }
                         } else if (scancode == sheet_window.c.SDL_SCANCODE_V) blk: {
                             if (is_holding_cmd) {
+                                did_just_paste = true;
                                 std.debug.print("pasting", .{});
                                 const maybe_cell_coords = block: {
                                     if (selected_cell) |cell| break :block cell;
@@ -531,22 +541,73 @@ pub fn main() !void {
         // state.y += @intFromFloat(scroll_sensitivity * scroll_vel_y);
 
         // const before_background = std.time.milliTimestamp();
-        try display.draw_background();
+
         // const before_refresh = std.time.milliTimestamp();
-        sheet.refresh_cell_values(&cells);
+
         // const before_render_cells = std.time.milliTimestamp();
+        if (event_was_polled or is_first_frame) {
+            std.debug.print("\n[Frame {}]Frametime: {}ms\n", .{ frame, frametime });
 
-        try sheet.render_cells(&state, &display, &cells, selected_cell, is_editing);
-        // const before_render_selections = std.time.milliTimestamp();
-        if (selected_area) |area| {
-            try sheet.render_selections(&state, &display, area);
+            try display.draw_background();
+            if (cell_was_updated) {
+                if (selected_cell) |cell| {
+                    const start = std.time.milliTimestamp();
+                    sheet.refresh_cell_values_for_cell(&cells, cell);
+                    const end = std.time.milliTimestamp();
+                    std.debug.print("[Frame {}]Refreshing all cells took {}ms\n", .{ frame, end - start });
+                }
+                // sheet.refresh_all_cell_values(&cells);
+            }
+            if (did_just_paste) {
+                if (selected_area) |area| {
+                    for (@intCast(area.x)..@intCast(area.x + area.w)) |x| {
+                        for (@intCast(area.y)..@intCast(area.y + area.h)) |y| {
+                            sheet.refresh_cell_values_for_cell(&cells, .{ .x = @intCast(x), .y = @intCast(y) });
+                        }
+                    }
+                }
+                did_just_paste = false;
+            }
+            if (is_first_frame) {
+                sheet.refresh_all_cell_values(&cells);
+            }
+            // var iter = cells.dependencies.keyIterator();
+
+            // while (iter.next()) |dependency| {
+            //     const entry = cells.dependencies.get(dependency.*).?;
+            //     for (entry.items) |item| {
+            //         std.debug.print("Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+            //     }
+            // }
+
+            // std.debug.print("\n\n", .{});
+            // var rev_iter = cells.reverse_dependencies.keyIterator();
+
+            // while (rev_iter.next()) |dependency| {
+            //     // const cell = cells.find(get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y) orelse continue;
+            //     const entry = cells.reverse_dependencies.get(dependency.*).?;
+            //     for (entry.items) |item| {
+            //         std.debug.print("Reverse Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+            //     }
+            // }
+
+            const start = std.time.milliTimestamp();
+            try sheet.render_cells(&state, &display, &cells, selected_cell, is_editing);
+            const end = std.time.milliTimestamp();
+            std.debug.print("[Frame {}]Rendering cells took {}ms\n", .{ frame, end - start });
+            std.debug.print("[Frame {}]Drew all cells\n", .{frame});
+            if (selected_area) |area| {
+                try sheet.render_selections(&state, &display, area);
+            }
+            // const before_labels = std.time.milliTimestamp();
+
+            try sheet.render_row_labels(&state, &display, selected_area, selected_cell);
+            try sheet.render_column_labels(&state, &display, selected_area, selected_cell);
+
+            try display.render_present();
         }
-        // const before_labels = std.time.milliTimestamp();
+        // const before_render_selections = std.time.milliTimestamp();
 
-        try sheet.render_row_labels(&state, &display, selected_area, selected_cell);
-        try sheet.render_column_labels(&state, &display, selected_area, selected_cell);
-
-        try display.render_present();
         const finish = std.time.milliTimestamp();
 
         // std.debug.print("Read cells: {}\n", .{after_read_cells - before_read_cells});

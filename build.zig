@@ -81,7 +81,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/cell.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -93,6 +93,16 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    exe_unit_tests.addCSourceFile(.{
+        .file = b.path("src/c/tinyexpr.c"),
+    });
+
+    // exe_unit_tests.addCSourceFile(.{
+    //     .file = b.path("src/c/tinyexpr.h"),
+    // });
+    exe_unit_tests.addIncludePath(.{ .src_path = .{ .owner = b, .sub_path = "src/c" } });
+    exe_unit_tests.linkLibC();
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

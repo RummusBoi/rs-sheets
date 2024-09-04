@@ -36,6 +36,7 @@ pub const SheetWindow = struct {
     renderer: *c.SDL_Renderer,
     cached_textures: std.ArrayList(CachedTexture),
     allocator: *std.mem.Allocator,
+    scratch_buffer: std.ArrayList(u8),
 
     pub fn init(width: u32, height: u32, allocator: *std.mem.Allocator) !SheetWindow {
         // const before_sdl_init = std.time.milliTimestamp();
@@ -80,6 +81,7 @@ pub const SheetWindow = struct {
             .renderer = renderer,
             .cached_textures = std.ArrayList(CachedTexture).init(allocator.*),
             .allocator = allocator,
+            .scratch_buffer = std.ArrayList(u8).init(allocator.*),
         };
     }
 
@@ -97,6 +99,7 @@ pub const SheetWindow = struct {
             const is_equal = std.mem.eql(u8, cached.key, key) and std.mem.eql(u8, cached.value, value);
             if (is_equal) return cached.texture;
         }
+
         return null;
     }
 
@@ -127,18 +130,16 @@ pub const SheetWindow = struct {
         if (c.SDL_RenderDrawLine(self.renderer, 20, y, 20, y + constants.CELL_HEIGHT) != 0) {
             sdl_panic("Drawing line for label.");
         }
-        const c_str = try std.heap.page_allocator.dupeZ(u8, value);
-        defer std.heap.page_allocator.free(c_str);
         var w: c_int = undefined;
         var h: c_int = undefined;
-        if (c.TTF_SizeText(self.font, c_str, &w, &h) != 0) {
+        if (c.TTF_SizeText(self.font, @ptrCast(value), &w, &h) != 0) {
             sdl_panic("Getting text size");
         }
         const texture_key = if (highlight) "label-highlight" else "label";
         const texture = self.find_cached_texture_for_value(value, texture_key) orelse blk: {
             const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };
 
-            const surface = c.TTF_RenderText_LCD(self.font, c_str, font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
+            const surface = c.TTF_RenderText_LCD(self.font, @ptrCast(value), font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
             defer c.SDL_FreeSurface(surface);
             const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse {
                 sdl_panic("Creating text texture.");
@@ -172,11 +173,9 @@ pub const SheetWindow = struct {
         if (c.SDL_RenderDrawLine(self.renderer, x, 20, x + constants.CELL_WIDTH, 20) != 0) {
             sdl_panic("Drawing line for label.");
         }
-        const c_str = try std.heap.page_allocator.dupeZ(u8, value);
-        defer std.heap.page_allocator.free(c_str);
         var w: c_int = undefined;
         var h: c_int = undefined;
-        if (c.TTF_SizeText(self.font, c_str, &w, &h) != 0) {
+        if (c.TTF_SizeText(self.font, @ptrCast(value), &w, &h) != 0) {
             sdl_panic("Getting text size");
         }
         const texture_key = if (highlight) "label-highlight" else "label";
@@ -184,7 +183,7 @@ pub const SheetWindow = struct {
         const texture = self.find_cached_texture_for_value(value, texture_key) orelse blk: {
             const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };
 
-            const surface = c.TTF_RenderText_Shaded(self.font, c_str, font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
+            const surface = c.TTF_RenderText_Shaded(self.font, @ptrCast(value), font_color, .{ .a = 255, .r = if (highlight) bg_color else 255, .g = if (highlight) bg_color else 255, .b = if (highlight) bg_color else 255 });
             defer c.SDL_FreeSurface(surface);
             const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse {
                 sdl_panic("Creating text texture.");
@@ -218,18 +217,22 @@ pub const SheetWindow = struct {
         if (c.SDL_RenderFillRect(self.renderer, &inner) != 0) {
             sdl_panic("Rendering inner rect.");
         }
-        const c_str = try std.heap.page_allocator.dupeZ(u8, value);
-        defer std.heap.page_allocator.free(c_str);
+
         var w: c_int = undefined;
         var h: c_int = undefined;
-        if (c.TTF_SizeText(self.font, c_str, &w, &h) != 0) {
-            sdl_panic("Getting text size");
-        }
+
         if (value.len > 0) {
-            const texture = self.find_cached_texture_for_value(value, "cell") orelse blk: {
+            self.scratch_buffer.clearRetainingCapacity();
+            try self.scratch_buffer.appendSlice(value);
+            try self.scratch_buffer.append(0);
+            if (c.TTF_SizeText(self.font, @ptrCast(self.scratch_buffer.items), &w, &h) != 0) {
+                sdl_panic("Getting text size");
+            }
+            const texture_res = self.find_cached_texture_for_value(value, "cell");
+            const texture = texture_res orelse blk: {
                 const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };
 
-                const surface = c.TTF_RenderText_Shaded(self.font, c_str, font_color, .{ .a = 255, .r = 255, .g = 255, .b = 255 });
+                const surface = c.TTF_RenderText_Shaded(self.font, @ptrCast(self.scratch_buffer.items), font_color, .{ .a = 255, .r = 255, .g = 255, .b = 255 });
                 defer c.SDL_FreeSurface(surface);
                 const texture = c.SDL_CreateTextureFromSurface(self.renderer, surface) orelse {
                     sdl_panic("Creating text texture.");
@@ -244,7 +247,6 @@ pub const SheetWindow = struct {
                 sdl_panic("Could not render");
             }
         }
-
         if (!with_cursor) return;
         const timestamp = std.time.milliTimestamp();
         if (@rem(timestamp, 1000) < 500) return;
@@ -266,7 +268,7 @@ pub const SheetWindow = struct {
         }
     }
 
-    pub fn delete_unused_textures(self: *SheetWindow, values: []const []u8, key: []const u8) void {
+    pub fn delete_unused_textures(self: *SheetWindow, values: std.StringHashMap(bool), key: []const u8) void {
         var index: usize = 0;
         // super stupid way of removing textures
         while (index < self.cached_textures.items.len) {
@@ -276,8 +278,7 @@ pub const SheetWindow = struct {
                 continue;
             }
             const texture_val = texture.value[0..texture.value.len];
-            if (!in_slice(texture_val, values)) {
-                std.debug.print("Deleting texture {s}\n", .{texture_val});
+            if (values.get(texture_val) == null) {
                 texture.deinit();
                 _ = self.cached_textures.swapRemove(index);
             } else {

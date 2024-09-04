@@ -27,7 +27,20 @@ pub fn pixel_to_cell(
     return .{ .x = x, .y = y };
 }
 
-pub fn refresh_cell_values(cells: *CellContainer) void {
+pub fn refresh_cell_values_for_cell(cells: *CellContainer, coords: CellCoords) void {
+    const cells_to_update = cells.get_cells_depending_on_this(coords.x, coords.y) catch {
+        std.debug.print("Could not fetch cells to update.", .{});
+        return;
+    };
+    defer cells.allocator.free(cells_to_update);
+    for (cells_to_update) |cell| {
+        cell.refresh_value(cells) catch {
+            std.debug.print("Failed when refreshing cell value for cell '{}'", .{cell});
+        };
+    }
+}
+
+pub fn refresh_all_cell_values(cells: *CellContainer) void {
     for (cells._cells.items) |cell| {
         cell.refresh_value(cells) catch {
             std.debug.print("Failed when refreshing cell value for cell '{}'", .{cell});
@@ -37,14 +50,16 @@ pub fn refresh_cell_values(cells: *CellContainer) void {
 
 pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells: *CellContainer, selected_cell: ?CellCoords, is_editing: bool) !void {
     // first we remove all the unused textures given our new values
-    const value_slice = try std.heap.page_allocator.alloc([]u8, cells._cells.items.len * 2);
-    defer std.heap.page_allocator.free(value_slice);
+    // const value_slice = try std.heap.page_allocator.alloc([]u8, cells._cells.items.len * 2);
+    var value_set = std.StringHashMap(bool).init(std.heap.page_allocator);
+    defer value_set.deinit();
 
-    for (cells._cells.items, 0..) |cell, index| {
-        value_slice[index] = cell.value.items;
-        value_slice[cells._cells.items.len + index] = cell.raw_value.items;
+    for (cells._cells.items) |cell| {
+        try value_set.put(cell.value.items, true);
+        try value_set.put(cell.raw_value.items, true);
     }
-    sheet_window.delete_unused_textures(value_slice, "cell");
+    sheet_window.delete_unused_textures(value_set, "cell");
+
     const pixel_offset_x = state.x - constants.CELL_START_X;
     const pixel_offset_y = state.y - constants.CELL_START_Y;
 
@@ -55,6 +70,7 @@ pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells
 
     var x: i32 = @max(cell_offset_x, 0);
     var found_selected_cell: ?*Cell = null;
+    const start_draw_stuff = std.time.milliTimestamp();
     while (x < cell_offset_x + horizontal_cell_count) : (x += 1) {
         var y: i32 = @max(cell_offset_y, 0);
         while (y < cell_offset_y + vertical_cell_count) : (y += 1) {
@@ -71,6 +87,8 @@ pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells
             try sheet_window.draw_cell(coords.x, coords.y, val, false, false, false);
         }
     }
+    const end_draw_stuff = std.time.milliTimestamp();
+    std.debug.print("Drawcellstuff: {}ms\n", .{end_draw_stuff - start_draw_stuff});
     if (found_selected_cell) |cell| {
         // render the raw value when we are editing
         const cell_value = if (is_editing) cell.raw_value.items else (cell.value.items);

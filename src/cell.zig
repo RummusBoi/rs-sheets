@@ -38,13 +38,19 @@ pub const Cell = struct {
         return .{ .x = x, .y = y, .raw_value = raw_value, .value = calculated_value, .allocator = allocator };
     }
 
-    fn replace_cell_references(self: *Cell, value: []u8, cells: *CellContainer) ![]u8 {
+    fn replace_cell_references(self: *Cell, value: []u8, cells: *CellContainer) !struct {
+        []u8,
+        []CellId,
+    } {
         // Replaces all single cell references with that cell's current value.
-        // NOTE: The caller must free the return slice
+
+        // NOTE: The caller must free the return slices
         //  Examples: A2, A13, AA27
 
         var result_str = std.ArrayList(u8).init(self.allocator.*);
         errdefer result_str.deinit();
+        var refs = std.ArrayList(CellId).init(self.allocator.*);
+        errdefer refs.deinit();
 
         var reference_start: ?usize = null;
         var reference_number_start: ?usize = null;
@@ -71,6 +77,7 @@ pub const Cell = struct {
                 const y = try std.fmt.parseInt(u8, number_part, 10);
 
                 const cell = cells.find(x, y);
+                try refs.append(get_cell_id(x, y));
 
                 result_str.items.len -= index - reference_start.? + @as(usize, if (char == 0) 0 else 1);
                 if (cell != null and cell.?.value.items.len > 0) {
@@ -89,7 +96,8 @@ pub const Cell = struct {
             }
         }
         // _ = std.mem.replace(u8, result_str.items, ",", ".", result_str.items);
-        return result_str.items;
+
+        return .{ result_str.items, refs.items };
     }
 
     pub fn refresh_value(self: *Cell, cells: *CellContainer) !void {
@@ -111,12 +119,19 @@ pub const Cell = struct {
                 return;
             }
             const expr = self.raw_value.items[1..];
-            const replaced_expr = self.replace_cell_references(expr, cells) catch {
+            const replaced_expr, const references = self.replace_cell_references(expr, cells) catch {
                 const error_message = "Invalid expression";
                 try self.value.appendSlice(error_message);
                 return;
             };
+
             defer self.allocator.free(replaced_expr);
+            defer self.allocator.free(references);
+
+            cells.remove_all_dependencies(self.x, self.y);
+            for (references) |ref| {
+                try cells.register_dependency(self.x, self.y, get_cell_pos(ref).x, get_cell_pos(ref).y);
+            }
             // check for emptyness. Remember that it is null-terminated!
             if (expr.len <= 1) {
                 const error_message = "Invalid expression";
@@ -146,13 +161,6 @@ pub const Cell = struct {
     }
 
     pub fn value_append(self: *Cell, char: u8) !void {
-        // if we filled the buffer, increase the size:
-        // if (self.buf_ptr == self.value.items.len) {
-        //     const new_value_slice = (try self.allocator.alloc(u8, self.value.items.len * 2));
-        //     std.mem.copyForwards(u8, new_value_slice, self.value.items);
-        //     self.allocator.free(self.value);
-        //     self.value = new_value_slice;
-        // }
         try self.raw_value.append(char);
     }
 
@@ -162,16 +170,35 @@ pub const Cell = struct {
     }
 };
 
+const CellId = i32;
+
+fn get_cell_id(x: i32, y: i32) CellId {
+    const a = 10000 * x + y;
+    return a;
+}
+
+pub fn get_cell_pos(id: CellId) struct { x: i32, y: i32 } {
+    return .{ .x = @divTrunc((id - @rem(id, 10000)), 10000), .y = @rem(id, 10000) };
+}
+
 pub const CellContainer = struct {
     _cells: std.ArrayList(*Cell),
-    _cell_index: std.AutoHashMap(i32, usize),
+    _cell_index: std.AutoHashMap(CellId, usize),
+    dependencies: std.AutoHashMap(CellId, std.ArrayList(CellId)),
+    reverse_dependencies: std.AutoHashMap(CellId, std.ArrayList(CellId)),
     allocator: *std.mem.Allocator,
     pub fn init(capacity: u32, allocator: *std.mem.Allocator) !CellContainer {
         const cells = try allocator.alloc(*Cell, capacity);
         var array_list = std.ArrayList(*Cell).init(allocator.*);
         try array_list.appendSlice(cells);
 
-        return CellContainer{ ._cells = array_list, ._cell_index = std.AutoHashMap(i32, usize).init(allocator.*), .allocator = allocator };
+        return CellContainer{
+            ._cells = array_list,
+            ._cell_index = std.AutoHashMap(CellId, usize).init(allocator.*),
+            .dependencies = std.AutoHashMap(CellId, std.ArrayList(CellId)).init(allocator.*),
+            .reverse_dependencies = std.AutoHashMap(CellId, std.ArrayList(CellId)).init(allocator.*),
+            .allocator = allocator,
+        };
     }
     pub fn add_cell(self: *CellContainer, x: i32, y: i32, value: []const u8) !*Cell {
         const cell = try Cell.init(self.allocator, x, y, value);
@@ -195,6 +222,9 @@ pub const CellContainer = struct {
         const index = self._cell_index.get(10000 * x + y) orelse return null;
         return self._cells.items[index];
     }
+    pub fn find_index(self: CellContainer, x: i32, y: i32) ?usize {
+        return self._cell_index.get(10000 * x + y);
+    }
     pub fn ensure_cell(self: *CellContainer, x: i32, y: i32) !*Cell {
         if (self.find(x, y)) |existing_cell| {
             return existing_cell;
@@ -202,8 +232,126 @@ pub const CellContainer = struct {
             return try self.add_cell(x, y, &.{});
         }
     }
+
+    pub fn register_dependency(self: *CellContainer, x: i32, y: i32, dependency_x: i32, dependency_y: i32) !void {
+        const cell_dependencies = try self.dependencies.getOrPutValue(get_cell_id(x, y), std.ArrayList(CellId).init(self.allocator.*));
+        try cell_dependencies.value_ptr.append(get_cell_id(dependency_x, dependency_y));
+
+        const dependency_dependencies = self.reverse_dependencies.getOrPutValue(get_cell_id(dependency_x, dependency_y), std.ArrayList(CellId).init(self.allocator.*)) catch |err| {
+            _ = cell_dependencies.value_ptr.pop();
+            return err;
+        };
+
+        dependency_dependencies.value_ptr.append(get_cell_id(x, y)) catch |err| {
+            _ = cell_dependencies.value_ptr.pop();
+            return err;
+        };
+    }
+
+    pub fn remove_all_dependencies(self: *CellContainer, x: i32, y: i32) void {
+        if (self.dependencies.getEntry(get_cell_id(x, y))) |dependencies| {
+            for (dependencies.value_ptr.items) |dependency| {
+                var reverse_dependencies = self.reverse_dependencies.getEntry(dependency) orelse continue;
+                std.debug.print("Reverse dependencies: {any}\n", .{reverse_dependencies.value_ptr.items});
+                if (std.mem.indexOfScalar(CellId, reverse_dependencies.value_ptr.items, get_cell_id(x, y))) |index| {
+                    std.debug.print("Found index {}", .{index});
+                    _ = reverse_dependencies.value_ptr.swapRemove(index);
+                }
+            }
+            dependencies.value_ptr.clearRetainingCapacity();
+        }
+        if (self.reverse_dependencies.getEntry(get_cell_id(x, y))) |reverse_dependencies| {
+            for (reverse_dependencies.value_ptr.items) |reverse_dependency| {
+                var dependencies = self.dependencies.getEntry(reverse_dependency) orelse continue;
+                if (std.mem.indexOfScalar(CellId, dependencies.value_ptr.items, get_cell_id(x, y))) |index| {
+                    _ = dependencies.value_ptr.swapRemove(index);
+                }
+            }
+            reverse_dependencies.value_ptr.clearRetainingCapacity();
+        }
+    }
+
+    pub fn get_cells_depending_on_this(self: *CellContainer, x: i32, y: i32) ![]*Cell {
+        var remaining_cells = std.ArrayList(*Cell).init(self.allocator.*);
+        defer remaining_cells.deinit();
+        var result = std.ArrayList(*Cell).init(self.allocator.*);
+        errdefer result.deinit();
+        try remaining_cells.append(self.find(x, y) orelse return &.{});
+        var index: usize = 0;
+        while (index < remaining_cells.items.len) : (index += 1) {
+            std.debug.print("Remaining cells: {any}\n", .{remaining_cells.items});
+            const cell = remaining_cells.items[index];
+            try result.append(cell);
+            if (self.reverse_dependencies.get(get_cell_id(cell.x, cell.y))) |reverse_dependencies| {
+                for (reverse_dependencies.items) |rev_dep| {
+                    const this_cell = self.find(get_cell_pos(rev_dep).x, get_cell_pos(rev_dep).y) orelse continue;
+                    try remaining_cells.append(this_cell);
+                }
+            }
+        }
+
+        return result.items;
+
+        // for (self.reverse_dependencies.getEntry(get_cell_id(x, y))) |*reverse_dependencies| {
+        //     for ()
+        // }
+    }
 };
 
+test "asd" {
+    var allocator = std.testing.allocator;
+    var cells = try CellContainer.init(0, &allocator);
+    try cells.register_dependency(0, 0, 2, 2);
+
+    var iter = cells.dependencies.keyIterator();
+
+    while (iter.next()) |dependency| {
+        const entry = cells.dependencies.get(dependency.*).?;
+        for (entry.items) |item| {
+            std.debug.print("Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        }
+    }
+
+    var rev_iter = cells.reverse_dependencies.keyIterator();
+
+    while (rev_iter.next()) |dependency| {
+        // const cell = cells.find(get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y) orelse continue;
+        const entry = cells.reverse_dependencies.get(dependency.*).?;
+        for (entry.items) |item| {
+            std.debug.print("Reverse Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        }
+    }
+
+    cells.remove_all_dependencies(0, 0);
+
+    iter = cells.dependencies.keyIterator();
+
+    while (iter.next()) |dependency| {
+        const entry = cells.dependencies.get(dependency.*).?;
+        for (entry.items) |item| {
+            std.debug.print("Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        }
+    }
+
+    rev_iter = cells.reverse_dependencies.keyIterator();
+
+    while (rev_iter.next()) |dependency| {
+        // const cell = cells.find(get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y) orelse continue;
+        const entry = cells.reverse_dependencies.get(dependency.*).?;
+        for (entry.items) |item| {
+            std.debug.print("Reverse Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        }
+    }
+}
+// test "get_cells_depending_on_this" {
+//     var allocator = std.testing.allocator;
+//     var cells = try CellContainer.init(0, &allocator);
+//     _ = try cells.add_cell(0, 0, "5");
+//     var equation = try cells.add_cell(1, 1, "=A0*5");
+//     try equation.refresh_value(&cells);
+//     const result_cells = try cells.get_cells_depending_on_this(0, 0);
+//     std.debug.print("Result: {any}\n", .{result_cells});
+// }
 fn chars_to_column(chars: []const u8) !i32 {
     // translates the given chars to the corresponding column.
     // Example: chars_to_column("A") -> 0, chars_to_column("AB") -> 26
