@@ -61,7 +61,11 @@ fn parse_contents(contents: []u8, allocator: *std.mem.Allocator) !CellContainer 
                 x += 1;
             }
         }
-        if (cells_on_this_line != expected_cells_per_line) return CsvError.IncorrectNumberOfCells;
+
+        if (cells_on_this_line != expected_cells_per_line) {
+            std.debug.print("On line {} found {} cells, but expected {}. Line was: \n{s}", .{ y, cells_on_this_line, expected_cells_per_line, line });
+            return CsvError.IncorrectNumberOfCells;
+        }
 
         // while (cell_spliterator.next()) |cell_content| : (x += 1) {
         //     if (cell_content.len == 0) continue;
@@ -83,26 +87,34 @@ pub fn write_cells_to_csv_file(allocator: *std.mem.Allocator, cells: CellContain
     var args = std.process.args();
     _ = args.skip();
     const path = args.next() orelse {
-        std.debug.print("Failed to save file", .{});
+        std.debug.print("Could not read path to file", .{});
         return CsvError.CouldNotReadPath;
     };
-    const file = try std.fs.openFileAbsolute(path, .{ .mode = .write_only });
+    // std.fs.deleteFileAbsolute(path) catch {
+    //     std.debug.print("Found no file on path {}, so couldn't delete it.\n", .{path});
+    // };
+    const file = try std.fs.createFileAbsolute(path, .{ .truncate = true });
+    var dest_buffer = std.ArrayList(u8).init(allocator.*); // try allocator.alloc(u8, cell.raw_value.items.len * 2 + 2);
+    defer dest_buffer.deinit();
 
     var file_contents = std.ArrayList(u8).init(allocator.*);
     for (0..@intCast(highest_y_found + 1)) |y| {
         for (0..@intCast(highest_x_found + 1)) |x| {
             if (cells.find(@intCast(x), @intCast(y))) |cell| {
-                const dest_buffer = try allocator.alloc(u8, cell.raw_value.items.len * 2 + 2);
-                defer allocator.free(dest_buffer);
-                const escaped_cell_value = insert_escape_characters(cell.raw_value.items, dest_buffer);
+                try dest_buffer.ensureTotalCapacity(cell.raw_value.items.len * 2 + 2);
+                dest_buffer.items.len = cell.raw_value.items.len * 2 + 2;
+                const escaped_cell_value = insert_escape_characters(cell.raw_value.items, dest_buffer.items);
                 try file_contents.appendSlice(escaped_cell_value);
             }
             if (x < highest_x_found) try file_contents.append(',');
         }
+
         if (y < highest_y_found) try file_contents.append('\n');
     }
 
     _ = try file.write(file_contents.items);
+
+    // _ = try file.write("hej");
 }
 
 fn insert_escape_characters(value: []const u8, dest_buffer: []u8) []u8 {

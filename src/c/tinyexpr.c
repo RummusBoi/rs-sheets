@@ -104,19 +104,33 @@ typedef struct state
 
 static te_expr *new_expr(const int type, const te_expr *parameters[])
 {
+    // printf("arity !\n ");
+    fflush(stdout);
     const int arity = ARITY(type);
+    // printf("psize !\n ");
+    fflush(stdout);
     const int psize = sizeof(void *) * arity;
+    // printf("size !\n ");
+    fflush(stdout);
     const int size = (sizeof(te_expr) - sizeof(void *)) + psize + (IS_CLOSURE(type) ? sizeof(void *) : 0);
+    // printf("malloc !\n ");
+    fflush(stdout);
     te_expr *ret = malloc(size);
+    // printf("check null !\n ");
+    fflush(stdout);
     CHECK_NULL(ret);
 
     memset(ret, 0, size);
     if (arity && parameters)
     {
+        // printf("memcpy !\n ");
+        fflush(stdout);
         memcpy(ret->parameters, parameters, psize);
     }
     ret->type = type;
     ret->bound = 0;
+    // printf("return !\n ");
+    fflush(stdout);
     return ret;
 }
 
@@ -422,18 +436,29 @@ static te_expr *base(state *s)
     /* <base>      =    <constant> | <variable> | <function-0> {"(" ")"} | <function-1> <power> | <function-X> "(" <expr> {"," <expr>} ")" | "(" <list> ")" */
     te_expr *ret;
     int arity;
-
+    // printf("type mask: %i!\n", s->type);
+    fflush(stdout);
     switch (TYPE_MASK(s->type))
     {
     case TOK_NUMBER:
+        // printf("TOK_NUMBERhh !\n ");
+        fflush(stdout);
         ret = new_expr(TE_CONSTANT, 0);
+        // printf("get ret!\n ");
+        fflush(stdout);
         CHECK_NULL(ret);
+        // printf("checked null !\n ");
+        fflush(stdout);
 
         ret->value = s->value;
+        // printf("getting next token !\n ");
+        fflush(stdout);
         next_token(s);
         break;
 
     case TOK_VARIABLE:
+        // printf("TOK_VARIABLE\n");
+        fflush(stdout);
         ret = new_expr(TE_VARIABLE, 0);
         CHECK_NULL(ret);
 
@@ -442,7 +467,11 @@ static te_expr *base(state *s)
         break;
 
     case TE_FUNCTION0:
+        // printf("TE_FUNCTION0\n");
+        fflush(stdout);
     case TE_CLOSURE0:
+        // printf("TE_CLOSURE0\n");
+        fflush(stdout);
         ret = new_expr(s->type, 0);
         CHECK_NULL(ret);
 
@@ -465,7 +494,11 @@ static te_expr *base(state *s)
         break;
 
     case TE_FUNCTION1:
+        // printf("TE_FUNCTION1\n");
+        fflush(stdout);
     case TE_CLOSURE1:
+        // printf("TE_CLOSURE1\n");
+        fflush(stdout);
         ret = new_expr(s->type, 0);
         CHECK_NULL(ret);
 
@@ -478,17 +511,41 @@ static te_expr *base(state *s)
         break;
 
     case TE_FUNCTION2:
+        // printf("TE_FUNCTION2\n");
+        fflush(stdout);
     case TE_FUNCTION3:
+        // printf("TE_FUNCTION3\n");
+        fflush(stdout);
     case TE_FUNCTION4:
+        // printf("TE_FUNCTION4\n");
+        fflush(stdout);
     case TE_FUNCTION5:
+        // printf("TE_FUNCTION5\n");
+        fflush(stdout);
     case TE_FUNCTION6:
+        // printf("TE_FUNCTION6\n");
+        fflush(stdout);
     case TE_FUNCTION7:
+        // printf("TE_FUNCTION7\n");
+        fflush(stdout);
     case TE_CLOSURE2:
+        // printf("TE_CLOSURE2\n");
+        fflush(stdout);
     case TE_CLOSURE3:
+        // printf("TE_CLOSURE3\n");
+        fflush(stdout);
     case TE_CLOSURE4:
+        // printf("TE_CLOSURE4\n");
+        fflush(stdout);
     case TE_CLOSURE5:
+        // printf("TE_CLOSURE5\n");
+        fflush(stdout);
     case TE_CLOSURE6:
+        // printf("TE_CLOSURE6\n");
+        fflush(stdout);
     case TE_CLOSURE7:
+        // printf("TE_CLOSURE7\n");
+        fflush(stdout);
         arity = ARITY(s->type);
 
         ret = new_expr(s->type, 0);
@@ -530,6 +587,8 @@ static te_expr *base(state *s)
         break;
 
     case TOK_OPEN:
+        // printf("TOK_OPENhh !\n ");
+        fflush(stdout);
         next_token(s);
         ret = list(s);
         CHECK_NULL(ret);
@@ -559,11 +618,17 @@ static te_expr *base(state *s)
 static te_expr *power(state *s)
 {
     /* <power>     =    {("-" | "+")} <base> */
+    // printf("in the power!\n");
+    fflush(stdout);
     int sign = 1;
     while (s->type == TOK_INFIX && (s->function == add || s->function == sub))
     {
+        // printf("iter!\n");
+        fflush(stdout);
         if (s->function == sub)
             sign = -sign;
+        // printf("getting next token!\n");
+        fflush(stdout);
         next_token(s);
     }
 
@@ -571,19 +636,31 @@ static te_expr *power(state *s)
 
     if (sign == 1)
     {
+        // printf("sign == 1!\n");
+        fflush(stdout);
         ret = base(s);
     }
     else
     {
+        // printf("doing the base!\n");
+        fflush(stdout);
         te_expr *b = base(s);
         CHECK_NULL(b);
 
+        // printf("ehh!\n");
+        fflush(stdout);
         ret = NEW_EXPR(TE_FUNCTION1 | TE_FLAG_PURE, b);
+        // printf("ehh2!\n");
+        fflush(stdout);
         CHECK_NULL(ret, te_free(b));
-
+        // printf("ehh3!\n");
+        fflush(stdout);
         ret->function = negate;
+        // printf("ehh4!\n");
+        fflush(stdout);
     }
-
+    // printf("return!\n");
+    fflush(stdout);
     return ret;
 }
 
@@ -653,11 +730,17 @@ static te_expr *factor(state *s)
 static te_expr *factor(state *s)
 {
     /* <factor>    =    <power> {"^" <power>} */
+    // printf("doing the power!\n");
+    fflush(stdout);
     te_expr *ret = power(s);
+    // printf("checking null!\n");
+    fflush(stdout);
     CHECK_NULL(ret);
 
     while (s->type == TOK_INFIX && (s->function == pow))
     {
+        // printf("iter!\n");
+        fflush(stdout);
         te_fun2 t = s->function;
         next_token(s);
         te_expr *p = power(s);
@@ -669,6 +752,8 @@ static te_expr *factor(state *s)
 
         ret->function = t;
     }
+    // printf("return!\n");
+    fflush(stdout);
 
     return ret;
 }
@@ -677,11 +762,17 @@ static te_expr *factor(state *s)
 static te_expr *term(state *s)
 {
     /* <term>      =    <factor> {("*" | "/" | "%") <factor>} */
+    // printf("doing the term!\n");
+    fflush(stdout);
     te_expr *ret = factor(s);
+    // printf("checking null!\n");
+    fflush(stdout);
     CHECK_NULL(ret);
 
     while (s->type == TOK_INFIX && (s->function == mul || s->function == divide || s->function == fmod))
     {
+        // printf("iter!\n");
+        fflush(stdout);
         te_fun2 t = s->function;
         next_token(s);
         te_expr *f = factor(s);
@@ -694,17 +785,25 @@ static te_expr *term(state *s)
         ret->function = t;
     }
 
+    // printf("return!\n");
+    fflush(stdout);
     return ret;
 }
 
 static te_expr *expr(state *s)
 {
     /* <expr>      =    <term> {("+" | "-") <term>} */
+    // printf("term!");
+    fflush(stdout);
     te_expr *ret = term(s);
+    // printf("checking null!");
+    fflush(stdout);
     CHECK_NULL(ret);
 
     while (s->type == TOK_INFIX && (s->function == add || s->function == sub))
     {
+        // printf("iter!");
+        fflush(stdout);
         te_fun2 t = s->function;
         next_token(s);
         te_expr *te = term(s);
@@ -716,18 +815,27 @@ static te_expr *expr(state *s)
 
         ret->function = t;
     }
-
+    // printf("return!");
+    fflush(stdout);
     return ret;
 }
 
 static te_expr *list(state *s)
 {
+    // printf("doing the list!");
+    fflush(stdout);
     /* <list>      =    <expr> {"," <expr>} */
     te_expr *ret = expr(s);
+    // printf("after expr!");
+    fflush(stdout);
     CHECK_NULL(ret);
+    // printf("after check null!");
+    fflush(stdout);
 
     while (s->type == TOK_SEP)
     {
+        // printf("iter!");
+        fflush(stdout);
         next_token(s);
         te_expr *e = expr(s);
         CHECK_NULL(e, te_free(ret));
@@ -865,16 +973,28 @@ te_expr *te_compile(const char *expression, const te_variable *variables, int va
     s.lookup_len = var_count;
 
     next_token(&s);
+    // printf("hej!");
+    fflush(stdout);
+
     te_expr *root = list(&s);
+    // printf("hej!");
+    fflush(stdout);
     if (root == NULL)
     {
         if (error)
+        {
+            // printf("hej!");
+            fflush(stdout);
             *error = -1;
+        }
         return NULL;
     }
-
+    // printf("hej!");
+    fflush(stdout);
     if (s.type != TOK_END)
     {
+        // printf("tok end");
+        fflush(stdout);
         te_free(root);
         if (error)
         {
@@ -886,6 +1006,8 @@ te_expr *te_compile(const char *expression, const te_variable *variables, int va
     }
     else
     {
+        // printf("optimize");
+        fflush(stdout);
         optimize(root);
         if (error)
             *error = 0;
@@ -895,8 +1017,10 @@ te_expr *te_compile(const char *expression, const te_variable *variables, int va
 
 double te_interp(const char *expression, int *error)
 {
-    te_expr *n = te_compile(expression, 0, 0, error);
+    // printf("Im a print statement");
+    // return 0;
 
+    te_expr *n = te_compile(expression, 0, 0, error);
     double ret;
     if (n)
     {
@@ -913,15 +1037,15 @@ double te_interp(const char *expression, int *error)
 static void pn(const te_expr *n, int depth)
 {
     int i, arity;
-    printf("%*s", depth, "");
+    // printf("%*s", depth, "");
 
     switch (TYPE_MASK(n->type))
     {
     case TE_CONSTANT:
-        printf("%f\n", n->value);
+        // printf("%f\n", n->value);
         break;
     case TE_VARIABLE:
-        printf("bound %p\n", n->bound);
+        // printf("bound %p\n", n->bound);
         break;
 
     case TE_FUNCTION0:
@@ -941,12 +1065,12 @@ static void pn(const te_expr *n, int depth)
     case TE_CLOSURE6:
     case TE_CLOSURE7:
         arity = ARITY(n->type);
-        printf("f%d", arity);
+        // printf("f%d", arity);
         for (i = 0; i < arity; i++)
         {
-            printf(" %p", n->parameters[i]);
+            // printf(" %p", n->parameters[i]);
         }
-        printf("\n");
+        // printf("\n");
         for (i = 0; i < arity; i++)
         {
             pn(n->parameters[i], depth + 1);

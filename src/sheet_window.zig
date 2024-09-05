@@ -221,13 +221,13 @@ pub const SheetWindow = struct {
         var w: c_int = undefined;
         var h: c_int = undefined;
 
+        self.scratch_buffer.clearRetainingCapacity();
+        try self.scratch_buffer.appendSlice(value);
+        try self.scratch_buffer.append(0);
+        if (c.TTF_SizeText(self.font, @ptrCast(self.scratch_buffer.items), &w, &h) != 0) {
+            sdl_panic("Getting text size");
+        }
         if (value.len > 0) {
-            self.scratch_buffer.clearRetainingCapacity();
-            try self.scratch_buffer.appendSlice(value);
-            try self.scratch_buffer.append(0);
-            if (c.TTF_SizeText(self.font, @ptrCast(self.scratch_buffer.items), &w, &h) != 0) {
-                sdl_panic("Getting text size");
-            }
             const texture_res = self.find_cached_texture_for_value(value, "cell");
             const texture = texture_res orelse blk: {
                 const font_color: c.SDL_Color = .{ .r = 0, .g = 0, .b = 0 };

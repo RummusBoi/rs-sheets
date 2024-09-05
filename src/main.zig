@@ -27,9 +27,13 @@ pub fn main() !void {
 
     std.debug.print("Found filepath: {s}", .{filepath});
 
-    var allocator = std.heap.page_allocator;
+    var allocator = std.heap.c_allocator;
+
     // const before_read_cells = std.time.milliTimestamp();
     var cells = try read_cells_from_csv_file(&allocator, filepath);
+    if (false) {
+        @panic("quit");
+    }
     // const after_read_cells = std.time.milliTimestamp();
     const default_width = 1000;
     const default_height = 1000;
@@ -68,22 +72,12 @@ pub fn main() !void {
 
     var is_first_frame = true;
     var frame: u64 = 0;
-    while (true) : (frame += 1) {
+    while (true) {
         var event_was_polled = false;
         var cell_was_updated = false;
         var frametime: i32 = 0;
         if (!is_first_frame) {
             // std.debug.print("Cells: {}\n", .{cells._cells.items.len});
-            const sleep_time = @max(next_frame - std.time.nanoTimestamp(), 0);
-
-            std.time.sleep(@intCast(sleep_time));
-            const nanos_elapsed = std.time.nanoTimestamp() - prev_frame;
-
-            frametime = @intFromFloat(@as(f32, @floatFromInt(nanos_elapsed)) / @as(f32, @floatFromInt(1000000)));
-            // _ = millis_elapsed;
-
-            prev_frame = std.time.nanoTimestamp();
-            next_frame = prev_frame + time_per_frame;
 
             var event: sheet_window.c.SDL_Event = undefined;
 
@@ -176,12 +170,15 @@ pub fn main() !void {
                                     } else {
                                         area.h = mouse_cell.y - area.y - 1;
                                     }
-                                    if (area.w != 1 or area.h != 1) {
-                                        selected_cell = null;
+                                    if (area.w == 1 and area.h == 1) {
+                                        selected_cell = .{ .x = area.x, .y = area.y };
+                                        selected_area = null;
                                     }
                                 } else if (selected_cell) |cell| {
                                     var w = mouse_cell.x - cell.x;
                                     var h = mouse_cell.y - cell.y;
+
+                                    if (w == 0 and h == 0) continue;
                                     w += if (w > 0) 1 else -1;
                                     h += if (h > 0) 1 else -1;
                                     selected_area = .{ .x = cell.x, .y = cell.y, .w = w, .h = h };
@@ -220,7 +217,6 @@ pub fn main() !void {
                         }
                     },
                     sheet_window.c.SDL_KEYDOWN => {
-                        cell_was_updated = true; // we flip the bool here to ensure that we always update
                         const keycode = event.key.keysym.sym;
 
                         if (keycode == sheet_window.c.SDLK_ESCAPE) {
@@ -248,11 +244,13 @@ pub fn main() !void {
                         } else if (keycode == sheet_window.c.SDLK_LSHIFT) {
                             is_holding_shift = true;
                         } else if (keycode == sheet_window.c.SDLK_BACKSPACE) {
+                            cell_was_updated = true;
                             if (selected_cell) |cell_coords| {
                                 if (cells.find(cell_coords.x, cell_coords.y)) |cell| {
                                     if (is_editing) cell.value_delete() else cell.raw_value.items.len = 0;
                                 }
                             } else if (selected_area) |area| {
+                                did_just_paste = true;
                                 const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
                                 const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
                                 const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
@@ -372,7 +370,7 @@ pub fn main() !void {
                             if (selected_cell) |cell_coords| {
                                 if (cells.find(cell_coords.x, cell_coords.y)) |cell| {
                                     const cell_value = cell.raw_value.items;
-                                    const c_str = try std.heap.page_allocator.dupeZ(u8, cell_value);
+                                    const c_str = try allocator.dupeZ(u8, cell_value);
                                     defer allocator.free(c_str);
                                     if (sheet_window.c.SDL_SetClipboardText(c_str) != 0) {
                                         std.debug.print("Could not paste text to clipboard.", .{});
@@ -425,7 +423,7 @@ pub fn main() !void {
                         } else if (scancode == sheet_window.c.SDL_SCANCODE_V) blk: {
                             if (is_holding_cmd) {
                                 did_just_paste = true;
-                                std.debug.print("pasting", .{});
+
                                 const maybe_cell_coords = block: {
                                     if (selected_cell) |cell| break :block cell;
                                     if (selected_area) |area| {
@@ -435,6 +433,7 @@ pub fn main() !void {
                                 };
                                 if (maybe_cell_coords) |cell_coords| {
                                     const clipboard = sheet_window.c.SDL_GetClipboardText();
+                                    std.debug.print("Pasting value '{s}'", .{clipboard});
                                     defer sheet_window.c.SDL_free(clipboard);
 
                                     var c_str_slice: []u8 = undefined;
@@ -447,19 +446,20 @@ pub fn main() !void {
                                     };
                                     curr_cell.raw_value.items.len = 0;
                                     var curr_width: i32 = 0;
-                                    var max_width: i32 = 0;
-                                    var height: i32 = 1;
-
-                                    for (c_str_slice) |char| {
+                                    var max_width: i32 = 1;
+                                    var height: i32 = 0;
+                                    if (c_str_slice[c_str_slice.len - 1] == '\n') c_str_slice.len -= 1;
+                                    for (0..c_str_slice.len + 1) |ind| {
+                                        const char = if (ind < c_str_slice.len) c_str_slice[ind] else 0;
                                         if (char == '\t') {
+                                            curr_width += 1;
                                             curr_cell_coords.x += 1;
                                             curr_cell = cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
                                                 std.debug.print("Failed when ensure that cell existed.", .{});
                                                 break :blk;
                                             };
                                             curr_cell.raw_value.items.len = 0;
-                                            curr_width += 1;
-                                        } else if (char == '\n') {
+                                        } else if (char == '\n' or char == 0) {
                                             curr_width += 1;
                                             max_width = @max(max_width, curr_width);
                                             curr_width = 0;
@@ -481,9 +481,11 @@ pub fn main() !void {
 
                                     // the pasted value might not end with a newline:
                                     max_width = @max(curr_width, max_width);
-                                    selected_area = .{ .x = cell_coords.x, .y = cell_coords.y, .w = max_width, .h = height };
-                                    selected_cell = null;
-                                    std.debug.print("Selected area: {}", .{selected_area.?});
+                                    if (max_width == 1 and height == 1) {
+                                        selected_cell = .{ .x = cell_coords.x, .y = cell_coords.y };
+                                    } else {
+                                        selected_area = .{ .x = cell_coords.x, .y = cell_coords.y, .w = max_width, .h = height };
+                                    }
                                 }
                             }
                         } else if (scancode == sheet_window.c.SDL_SCANCODE_LGUI) {
@@ -545,28 +547,40 @@ pub fn main() !void {
         // const before_refresh = std.time.milliTimestamp();
 
         // const before_render_cells = std.time.milliTimestamp();
-        if (event_was_polled or is_first_frame) {
-            std.debug.print("\n[Frame {}]Frametime: {}ms\n", .{ frame, frametime });
 
+        // _ = millis_elapsed;
+
+        if (event_was_polled or is_first_frame) {
             try display.draw_background();
+            std.debug.print("\n", .{});
             if (cell_was_updated) {
                 if (selected_cell) |cell| {
                     const start = std.time.milliTimestamp();
-                    sheet.refresh_cell_values_for_cell(&cells, cell);
+                    const count = sheet.refresh_cell_values_for_cell(&cells, cell, true);
                     const end = std.time.milliTimestamp();
-                    std.debug.print("[Frame {}]Refreshing all cells took {}ms\n", .{ frame, end - start });
+                    std.debug.print("[Frame {}]Refreshing {} cells took {}ms\n", .{ frame, count, end - start });
                 }
                 // sheet.refresh_all_cell_values(&cells);
             }
             if (did_just_paste) {
+                const start = std.time.milliTimestamp();
                 if (selected_area) |area| {
                     for (@intCast(area.x)..@intCast(area.x + area.w)) |x| {
                         for (@intCast(area.y)..@intCast(area.y + area.h)) |y| {
-                            sheet.refresh_cell_values_for_cell(&cells, .{ .x = @intCast(x), .y = @intCast(y) });
+                            const cell = cells.find(@intCast(x), @intCast(y)) orelse continue;
+                            try cell.refresh_value(&cells, true);
+                            // sheet.refresh_cell_values_for_cell(&cells, .{ .x = @intCast(x), .y = @intCast(y) });
                         }
                     }
                 }
+                if (selected_cell) |cell_coords| {
+                    const cell = cells.find(@intCast(cell_coords.x), @intCast(cell_coords.y)) orelse continue;
+                    try cell.refresh_value(&cells, true);
+                }
                 did_just_paste = false;
+                const end = std.time.milliTimestamp();
+
+                std.debug.print("[Frame {}]Refreshing values took {}ms", .{ frame, end - start });
             }
             if (is_first_frame) {
                 sheet.refresh_all_cell_values(&cells);
@@ -605,7 +619,28 @@ pub fn main() !void {
             try sheet.render_column_labels(&state, &display, selected_area, selected_cell);
 
             try display.render_present();
-        }
+
+            const sleep_time = @max(next_frame - std.time.nanoTimestamp(), 0);
+            if (!is_first_frame) std.time.sleep(@intCast(sleep_time));
+
+            const nanos_elapsed = std.time.nanoTimestamp() - prev_frame;
+            frametime = @intFromFloat(@as(f32, @floatFromInt(nanos_elapsed)) / @as(f32, @floatFromInt(1000000)));
+            std.debug.print("[Frame {}]Frametime: {}ms\n", .{ frame, frametime });
+            frame += 1;
+        } else {
+            std.time.sleep(time_per_frame);
+        } //else if (is_editing) {
+        //     std.debug.print("in here", .{});
+        //     if (selected_cell) |cell_coords| {
+        //         std.debug.print("in here2", .{});
+        //         if (cells.find(cell_coords.x, cell_coords.y)) |cell| {
+        //             std.debug.print("in here3", .{});
+        //             const pixel_coords = sheet.cell_to_pixel(cell.x, cell.y, &state);
+        //             try display.draw_cell(pixel_coords.x, pixel_coords.y, cell.raw_value.items, true, true, true);
+        //             try display.render_present();
+        //         }
+        //     }
+        // }
         // const before_render_selections = std.time.milliTimestamp();
 
         const finish = std.time.milliTimestamp();
@@ -620,6 +655,8 @@ pub fn main() !void {
             std.debug.print("\n\nFull startup took {}ms\n", .{finish - startup});
             is_first_frame = false;
         }
+        prev_frame = std.time.nanoTimestamp();
+        next_frame = prev_frame + time_per_frame;
         // @panic("hej");
     }
 }

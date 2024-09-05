@@ -100,7 +100,7 @@ pub const Cell = struct {
         return .{ result_str.items, refs.items };
     }
 
-    pub fn refresh_value(self: *Cell, cells: *CellContainer) !void {
+    pub fn refresh_value(self: *Cell, cells: *CellContainer, modify_deps: bool) !void {
         if (self.raw_value.items.len == 0) {
             self.value.items.len = 0;
             return;
@@ -127,10 +127,11 @@ pub const Cell = struct {
 
             defer self.allocator.free(replaced_expr);
             defer self.allocator.free(references);
-
-            cells.remove_all_dependencies(self.x, self.y);
-            for (references) |ref| {
-                try cells.register_dependency(self.x, self.y, get_cell_pos(ref).x, get_cell_pos(ref).y);
+            if (modify_deps) {
+                cells.remove_all_dependencies(self.x, self.y);
+                for (references) |ref| {
+                    try cells.register_dependency(self.x, self.y, get_cell_pos(ref).x, get_cell_pos(ref).y);
+                }
             }
             // check for emptyness. Remember that it is null-terminated!
             if (expr.len <= 1) {
@@ -142,6 +143,7 @@ pub const Cell = struct {
             const null_terminated_expr = try self.allocator.dupeZ(u8, replaced_expr);
             defer self.allocator.free(null_terminated_expr);
             const result = tinyexpr.te_interp(null_terminated_expr, 0);
+
             var res_buffer: [64]u8 = .{0} ** 64;
             const float_as_str = std.fmt.formatFloat(&res_buffer, result, .{ .mode = .decimal }) catch {
                 const error_message = "Expression too large";
@@ -260,15 +262,15 @@ pub const CellContainer = struct {
             }
             dependencies.value_ptr.clearRetainingCapacity();
         }
-        if (self.reverse_dependencies.getEntry(get_cell_id(x, y))) |reverse_dependencies| {
-            for (reverse_dependencies.value_ptr.items) |reverse_dependency| {
-                var dependencies = self.dependencies.getEntry(reverse_dependency) orelse continue;
-                if (std.mem.indexOfScalar(CellId, dependencies.value_ptr.items, get_cell_id(x, y))) |index| {
-                    _ = dependencies.value_ptr.swapRemove(index);
-                }
-            }
-            reverse_dependencies.value_ptr.clearRetainingCapacity();
-        }
+        // if (self.reverse_dependencies.getEntry(get_cell_id(x, y))) |reverse_dependencies| {
+        //     for (reverse_dependencies.value_ptr.items) |reverse_dependency| {
+        //         var dependencies = self.dependencies.getEntry(reverse_dependency) orelse continue;
+        //         if (std.mem.indexOfScalar(CellId, dependencies.value_ptr.items, get_cell_id(x, y))) |index| {
+        //             _ = dependencies.value_ptr.swapRemove(index);
+        //         }
+        //     }
+        //     reverse_dependencies.value_ptr.clearRetainingCapacity();
+        // }
     }
 
     pub fn get_cells_depending_on_this(self: *CellContainer, x: i32, y: i32) ![]*Cell {
@@ -279,9 +281,12 @@ pub const CellContainer = struct {
         try remaining_cells.append(self.find(x, y) orelse return &.{});
         var index: usize = 0;
         while (index < remaining_cells.items.len) : (index += 1) {
-            std.debug.print("Remaining cells: {any}\n", .{remaining_cells.items});
+            // std.debug.print("Remaining cells: {any}\n", .{remaining_cells.items});
             const cell = remaining_cells.items[index];
-            try result.append(cell);
+            // the first cell is "this cell", and that doesnt depend on itself
+            if (index > 0) {
+                try result.append(cell);
+            }
             if (self.reverse_dependencies.get(get_cell_id(cell.x, cell.y))) |reverse_dependencies| {
                 for (reverse_dependencies.items) |rev_dep| {
                     const this_cell = self.find(get_cell_pos(rev_dep).x, get_cell_pos(rev_dep).y) orelse continue;
