@@ -25,15 +25,13 @@ pub fn main() !void {
         @panic("Something went wrong.");
     };
 
-    std.debug.print("Found filepath: {s}", .{filepath});
+    std.debug.print("Found filepath: {s}\n", .{filepath});
 
     var allocator = std.heap.c_allocator;
 
     // const before_read_cells = std.time.milliTimestamp();
     var cells = try read_cells_from_csv_file(&allocator, filepath);
-    if (false) {
-        @panic("quit");
-    }
+
     // const after_read_cells = std.time.milliTimestamp();
     const default_width = 1000;
     const default_height = 1000;
@@ -124,12 +122,13 @@ pub fn main() !void {
                             const maybe_cell = sheet.pixel_to_cell(event.button.x, event.button.y, &state);
 
                             if (maybe_cell) |cell| {
-                                if (is_holding_shift and selected_cell != null) {
-                                    var w = cell.x - selected_cell.?.x;
-                                    var h = cell.y - selected_cell.?.y;
+                                if (is_holding_shift) {
+                                    const coords = if (selected_cell) |cell_coords| .{ .x = cell_coords.x, .y = cell_coords.y } else if (selected_area) |area| .{ .x = area.x, .y = area.y } else continue;
+                                    var w = cell.x - coords.x;
+                                    var h = cell.y - coords.y;
                                     w += if (w > 0) 1 else -1;
                                     h += if (h > 0) 1 else -1;
-                                    selected_area = .{ .x = selected_cell.?.x, .y = selected_cell.?.y, .w = w, .h = h };
+                                    selected_area = .{ .x = coords.x, .y = coords.y, .w = w, .h = h };
                                     selected_cell = null;
                                 } else {
                                     _ = cells.ensure_cell(cell.x, cell.y) catch {
