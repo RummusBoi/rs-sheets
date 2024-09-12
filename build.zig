@@ -42,7 +42,7 @@ pub fn build(b: *std.Build) void {
     exe.addIncludePath(.{ .src_path = .{ .owner = b, .sub_path = "/opt/homebrew/include" } });
     exe.linkSystemLibrary("SDL2");
     exe.linkSystemLibrary("SDL2_ttf");
-    exe.linkSystemLibrary("SDL2_gfx");
+
     exe.addCSourceFile(.{
         .file = b.path("src/c/tinyexpr.c"),
     });
