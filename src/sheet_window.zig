@@ -13,7 +13,7 @@ const CachedTexture = struct {
     value: []u8,
     key: []u8,
     texture: *c.SDL_Texture,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     pub fn init(value: []u8, texture: *c.SDL_Texture, allocator: *std.mem.Allocator) !CachedTexture {
         const heap_value = try allocator.alloc(u8, value.len);
@@ -35,10 +35,10 @@ pub const SheetWindow = struct {
     font_color: c.SDL_Color,
     renderer: *c.SDL_Renderer,
     cached_textures: std.ArrayList(CachedTexture),
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     scratch_buffer: std.ArrayList(u8),
 
-    pub fn init(width: u32, height: u32, allocator: *std.mem.Allocator) !SheetWindow {
+    pub fn init(width: u32, height: u32, allocator: std.mem.Allocator) !SheetWindow {
         // const before_sdl_init = std.time.milliTimestamp();
         _ = c.SDL_Init(c.SDL_INIT_EVERYTHING);
         // const before_ttf_init = std.time.milliTimestamp();
@@ -79,9 +79,9 @@ pub const SheetWindow = struct {
             .font_color = font_color,
             .font = font,
             .renderer = renderer,
-            .cached_textures = std.ArrayList(CachedTexture).init(allocator.*),
+            .cached_textures = std.ArrayList(CachedTexture).init(allocator),
             .allocator = allocator,
-            .scratch_buffer = std.ArrayList(u8).init(allocator.*),
+            .scratch_buffer = std.ArrayList(u8).init(allocator),
         };
     }
 

@@ -56,7 +56,7 @@ pub fn refresh_all_cell_values(cells: *CellContainer) void {
 pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells: *CellContainer, selected_cell: ?CellCoords, is_editing: bool) !void {
     // first we remove all the unused textures given our new values
     // const value_slice = try std.heap.page_allocator.alloc([]u8, cells._cells.items.len * 2);
-    var value_set = std.StringHashMap(bool).init(cells.allocator.*);
+    var value_set = std.StringHashMap(bool).init(cells.allocator);
     defer value_set.deinit();
 
     for (cells._cells.items) |cell| {
@@ -75,6 +75,7 @@ pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells
 
     var x: i32 = @max(cell_offset_x, 0);
     var found_selected_cell: ?*Cell = null;
+
     while (x < cell_offset_x + horizontal_cell_count) : (x += 1) {
         var y: i32 = @max(cell_offset_y, 0);
         while (y < cell_offset_y + vertical_cell_count) : (y += 1) {
@@ -91,20 +92,13 @@ pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells
             try sheet_window.draw_cell(coords.x, coords.y, val, false, false, false);
         }
     }
+
     if (found_selected_cell) |cell| {
         // render the raw value when we are editing
         const cell_value = if (is_editing) cell.raw_value.items else (cell.value.items);
         const pixel_coords = cell_to_pixel(cell.x, cell.y, state);
         try sheet_window.draw_cell(pixel_coords.x, pixel_coords.y, cell_value, true, is_editing, is_editing);
     }
-    // var x_start = pixel_offset_x;
-
-    // while (x_start < state.width) : (x_start += constants.CELL_WIDTH) {
-    //     var y_start = pixel_offset_y;
-    //     while (y_start < constants.SDL_WINDOW_HEIGHT) : (y_start += constants.CELL_HEIGHT) {
-    //         try sheet_window.draw_cell(x_start, y_start, &.{});
-    //     }x
-    // }
 }
 
 pub fn render_selections(state: *const WindowState, sheet_window: *SheetWindow, selected_area: Area) !void {

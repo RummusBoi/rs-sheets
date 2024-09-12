@@ -28,12 +28,12 @@ pub const Cell = struct {
     raw_value: std.ArrayList(u8),
     value: std.ArrayList(u8),
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator, x: i32, y: i32, value: []const u8) !Cell {
-        var raw_value = std.ArrayList(u8).init(allocator.*);
+    pub fn init(allocator: std.mem.Allocator, x: i32, y: i32, value: []const u8) !Cell {
+        var raw_value = std.ArrayList(u8).init(allocator);
         try raw_value.appendSlice(value);
-        const calculated_value = std.ArrayList(u8).init(allocator.*);
+        const calculated_value = std.ArrayList(u8).init(allocator);
 
         return .{ .x = x, .y = y, .raw_value = raw_value, .value = calculated_value, .allocator = allocator };
     }
@@ -47,9 +47,9 @@ pub const Cell = struct {
         // NOTE: The caller must free the return slices
         //  Examples: A2, A13, AA27
 
-        var result_str = std.ArrayList(u8).init(self.allocator.*);
+        var result_str = std.ArrayList(u8).init(self.allocator);
         errdefer result_str.deinit();
-        var refs = std.ArrayList(CellId).init(self.allocator.*);
+        var refs = std.ArrayList(CellId).init(self.allocator);
         errdefer refs.deinit();
 
         var reference_start: ?usize = null;
@@ -188,17 +188,17 @@ pub const CellContainer = struct {
     _cell_index: std.AutoHashMap(CellId, usize),
     dependencies: std.AutoHashMap(CellId, std.ArrayList(CellId)),
     reverse_dependencies: std.AutoHashMap(CellId, std.ArrayList(CellId)),
-    allocator: *std.mem.Allocator,
-    pub fn init(capacity: u32, allocator: *std.mem.Allocator) !CellContainer {
+    allocator: std.mem.Allocator,
+    pub fn init(capacity: u32, allocator: std.mem.Allocator) !CellContainer {
         const cells = try allocator.alloc(*Cell, capacity);
-        var array_list = std.ArrayList(*Cell).init(allocator.*);
+        var array_list = std.ArrayList(*Cell).init(allocator);
         try array_list.appendSlice(cells);
 
         return CellContainer{
             ._cells = array_list,
-            ._cell_index = std.AutoHashMap(CellId, usize).init(allocator.*),
-            .dependencies = std.AutoHashMap(CellId, std.ArrayList(CellId)).init(allocator.*),
-            .reverse_dependencies = std.AutoHashMap(CellId, std.ArrayList(CellId)).init(allocator.*),
+            ._cell_index = std.AutoHashMap(CellId, usize).init(allocator),
+            .dependencies = std.AutoHashMap(CellId, std.ArrayList(CellId)).init(allocator),
+            .reverse_dependencies = std.AutoHashMap(CellId, std.ArrayList(CellId)).init(allocator),
             .allocator = allocator,
         };
     }
@@ -236,10 +236,10 @@ pub const CellContainer = struct {
     }
 
     pub fn register_dependency(self: *CellContainer, x: i32, y: i32, dependency_x: i32, dependency_y: i32) !void {
-        const cell_dependencies = try self.dependencies.getOrPutValue(get_cell_id(x, y), std.ArrayList(CellId).init(self.allocator.*));
+        const cell_dependencies = try self.dependencies.getOrPutValue(get_cell_id(x, y), std.ArrayList(CellId).init(self.allocator));
         try cell_dependencies.value_ptr.append(get_cell_id(dependency_x, dependency_y));
 
-        const dependency_dependencies = self.reverse_dependencies.getOrPutValue(get_cell_id(dependency_x, dependency_y), std.ArrayList(CellId).init(self.allocator.*)) catch |err| {
+        const dependency_dependencies = self.reverse_dependencies.getOrPutValue(get_cell_id(dependency_x, dependency_y), std.ArrayList(CellId).init(self.allocator)) catch |err| {
             _ = cell_dependencies.value_ptr.pop();
             return err;
         };
@@ -254,9 +254,7 @@ pub const CellContainer = struct {
         if (self.dependencies.getEntry(get_cell_id(x, y))) |dependencies| {
             for (dependencies.value_ptr.items) |dependency| {
                 var reverse_dependencies = self.reverse_dependencies.getEntry(dependency) orelse continue;
-                std.debug.print("Reverse dependencies: {any}\n", .{reverse_dependencies.value_ptr.items});
                 if (std.mem.indexOfScalar(CellId, reverse_dependencies.value_ptr.items, get_cell_id(x, y))) |index| {
-                    std.debug.print("Found index {}", .{index});
                     _ = reverse_dependencies.value_ptr.swapRemove(index);
                 }
             }
@@ -274,9 +272,9 @@ pub const CellContainer = struct {
     }
 
     pub fn get_cells_depending_on_this(self: *CellContainer, x: i32, y: i32) ![]*Cell {
-        var remaining_cells = std.ArrayList(*Cell).init(self.allocator.*);
+        var remaining_cells = std.ArrayList(*Cell).init(self.allocator);
         defer remaining_cells.deinit();
-        var result = std.ArrayList(*Cell).init(self.allocator.*);
+        var result = std.ArrayList(*Cell).init(self.allocator);
         errdefer result.deinit();
         try remaining_cells.append(self.find(x, y) orelse return &.{});
         var index: usize = 0;

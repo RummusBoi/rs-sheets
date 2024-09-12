@@ -8,15 +8,15 @@ const CsvError = error{
 
 // this file is responsible for reading the given CSV file and return a CellContainer with all the given data in it.
 //
-pub fn read_cells_from_csv_file(allocator: *std.mem.Allocator, path: []const u8) !CellContainer {
+pub fn read_cells_from_csv_file(allocator: std.mem.Allocator, path: []const u8) !CellContainer {
     const file = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
-    const contents = try file.readToEndAlloc(allocator.*, 100000000); // 100mb
+    const contents = try file.readToEndAlloc(allocator, 100000000); // 100mb
     defer allocator.free(contents);
 
     return try parse_contents(contents, allocator);
 }
 
-fn parse_contents(contents: []u8, allocator: *std.mem.Allocator) !CellContainer {
+fn parse_contents(contents: []u8, allocator: std.mem.Allocator) !CellContainer {
     // reads the given contents and produces a CellContainer.
     // NOTE (Rasmus): How do we escape commas in the CSV file? Just put double quotes around any cell that contains a comma.
 
