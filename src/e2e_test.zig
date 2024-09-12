@@ -19,6 +19,7 @@ pub const TestEventPoller = struct {
     test_step_event_index: usize = 0,
     app: *SpreadSheetApp,
     did_just_poll: bool = false,
+    first_event_poll_time: ?i64 = null,
 
     pub fn init(test_steps: []const *const TestStep, app: *SpreadSheetApp) TestEventPoller {
         return TestEventPoller{
@@ -46,10 +47,15 @@ pub const TestEventPoller = struct {
             self.did_just_poll = false;
             return 0;
         }
+        if (self.first_event_poll_time == null) {
+            self.first_event_poll_time = std.time.milliTimestamp();
+        }
         std.debug.print("On step {}, event {}\n", .{ self.test_step_index, self.test_step_event_index });
         if (self.test_step_index == self.test_steps.len) {
             event.* = sheet_window.c.SDL_Event{ .type = sheet_window.c.SDL_QUIT };
             std.debug.print("Quitting due to end of test.\n", .{});
+            const end_timestamp = std.time.milliTimestamp();
+            std.debug.print("Whole test took {}ms\n", .{end_timestamp - self.first_event_poll_time.?});
             return 1;
         }
         if (self.test_step_event_index == self.test_steps[self.test_step_index].events.len) {
@@ -81,7 +87,6 @@ fn enter_text(text: []const u8) [1]sheet_window.c.SDL_Event {
                 // const s = "hej";
                 var arr: [32]u8 = .{0} ** 32;
                 std.mem.copyForwards(u8, &arr, text);
-                std.debug.print("Inserting '{s}'\n", .{arr});
                 break :blk arr;
             },
         },
@@ -137,6 +142,23 @@ fn click_key(key: c_int) [2]sheet_window.c.SDL_Event {
             .type = sheet_window.c.SDL_KEYDOWN,
             .keysym = .{ .sym = key },
         } },
+        sheet_window.c.SDL_Event{ .key = .{
+            .type = sheet_window.c.SDL_KEYUP,
+            .keysym = .{ .sym = key },
+        } },
+    };
+}
+
+fn hold_key(key: c_int) [1]sheet_window.c.SDL_Event {
+    return .{
+        sheet_window.c.SDL_Event{ .key = .{
+            .type = sheet_window.c.SDL_KEYDOWN,
+            .keysym = .{ .sym = key },
+        } },
+    };
+}
+fn release_key(key: c_int) [1]sheet_window.c.SDL_Event {
+    return .{
         sheet_window.c.SDL_Event{ .key = .{
             .type = sheet_window.c.SDL_KEYUP,
             .keysym = .{ .sym = key },
@@ -256,7 +278,6 @@ const TestEnterDataInSingleCell = struct {
                     arr[1] = 'e';
                     arr[2] = 'j';
                     // std.mem.copyForwards(u8, &arr, s);
-                    std.debug.print("Inserting '{s}'\n", .{arr});
                     break :blk arr;
                 },
             },
@@ -487,6 +508,42 @@ const TestAreaSelectClearsCell = struct {
     }
 };
 
+const TestAreaSelectUpperLeft = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestAreaSelectUpperLeft {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 0)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&hold_key(sheet_window.c.SDLK_LSHIFT)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_left()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&release_key(sheet_window.c.SDLK_LSHIFT)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestAreaSelectUpperLeft{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 0);
+        try std.testing.expect(cell != null);
+
+        std.testing.expectEqual(false, app.is_editing) catch |err| {
+            std.debug.print("Expected to not be editing.\n", .{});
+            return err;
+        };
+        std.testing.expectEqual(null, app.selected_cell) catch |err| {
+            std.debug.print("Expected selected cell to be null.\n", .{});
+            return err;
+        };
+        std.testing.expectEqual(sheet.Area{ .x = 0, .y = 0, .w = 1, .h = 1 }, app.selected_area) catch |err| {
+            std.debug.print("Expected selected area to be set.\n", .{});
+            return err;
+        };
+    }
+};
+
 const TestSelectCellClearsArea = struct {
     test_step: TestStep,
     pub fn init(state: *WindowState) TestSelectCellClearsArea {
@@ -516,6 +573,84 @@ const TestSelectCellClearsArea = struct {
         };
         std.testing.expectEqual(null, app.selected_area) catch |err| {
             std.debug.print("Expected selected area to be null.\n", .{});
+            return err;
+        };
+    }
+};
+
+const TestSelectAreaBackspace = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestSelectAreaBackspace {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 5, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("cell to be deleted")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&select_area(state, 5, 10, 6, 11)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_BACKSPACE)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestSelectAreaBackspace{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        std.testing.expectEqual(false, app.is_editing) catch |err| {
+            std.debug.print("Expected to not be editing.\n", .{});
+            return err;
+        };
+        std.testing.expectEqual(null, app.selected_cell) catch |err| {
+            std.debug.print("Expected selected cell to be null.\n", .{});
+            return err;
+        };
+        std.testing.expectEqual(sheet.Area{ .x = 5, .y = 10, .w = 2, .h = 2 }, app.selected_area) catch |err| {
+            std.debug.print("Expected selected area to be set.\n", .{});
+            return err;
+        };
+        const cell = app.cells.find(5, 10);
+        try std.testing.expect(cell != null);
+        const expected_value = "";
+        std.testing.expectEqualStrings(expected_value, cell.?.value.items) catch |err| {
+            std.debug.print("Expected cell to have text", .{});
+            return err;
+        };
+    }
+};
+
+const TestSelectAreaBackspaceReverse = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestSelectAreaBackspace {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 5, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("cell to be deleted")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&select_area(state, 6, 11, 5, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_BACKSPACE)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestSelectAreaBackspace{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        std.testing.expectEqual(false, app.is_editing) catch |err| {
+            std.debug.print("Expected to not be editing.\n", .{});
+            return err;
+        };
+        std.testing.expectEqual(null, app.selected_cell) catch |err| {
+            std.debug.print("Expected selected cell to be set.\n", .{});
+            return err;
+        };
+        std.testing.expectEqual(sheet.Area{ .x = 6, .y = 11, .w = -2, .h = -2 }, app.selected_area) catch |err| {
+            std.debug.print("Expected selected area to be null.\n", .{});
+            return err;
+        };
+        const cell = app.cells.find(5, 10);
+        try std.testing.expect(cell != null);
+        const expected_value = "";
+        std.testing.expectEqualStrings(expected_value, cell.?.value.items) catch |err| {
+            std.debug.print("Expected cell to have text", .{});
             return err;
         };
     }
@@ -893,6 +1028,33 @@ const TestCopyPasteArea = struct {
             std.debug.print("Expected selected area to be set.\n", .{});
             return err;
         };
+        // check that the paste wrote data
+    }
+};
+
+const TestPasteThenMoveDoesntDelete = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestPasteThenMoveDoesntDelete {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("5")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&select_area(state, 0, 10, 1, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_copy()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_paste()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestPasteThenMoveDoesntDelete{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 10) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("5", cell.raw_value.items);
         // check that the paste wrote data
     }
 };
@@ -1348,7 +1510,7 @@ const TestTinyExprAndCellRef = struct {
 };
 
 pub fn run_e2e() !void {
-    var app = try SpreadSheetApp.init("/Users/dkRaHySa/Desktop/programs/rs-sheets/src/assets/e2e_test.csv");
+    var app = try SpreadSheetApp.init("/Users/dkRaHySa/Desktop/programs/rs-sheets/src/assets/e2e_test.csv", true, 1000);
     try app.render_and_present_next_frame(true);
 
     const steps = [_]*const TestStep{
@@ -1359,6 +1521,9 @@ pub fn run_e2e() !void {
         &TestKeyboardNavigation.init(&app.state).test_step,
         &TestOutOfBoundKeyboard.init(&app.state).test_step,
         &TestAreaSelectClearsCell.init(&app.state).test_step,
+        &TestAreaSelectUpperLeft.init(&app.state).test_step,
+        &TestSelectAreaBackspace.init(&app.state).test_step,
+        &TestSelectAreaBackspaceReverse.init(&app.state).test_step,
         &TestSelectCellClearsArea.init(&app.state).test_step,
         &TestArrowAfterAreaSelect.init(&app.state).test_step,
         &TestArrowAfterAreaSelect2.init(&app.state).test_step,
@@ -1368,6 +1533,7 @@ pub fn run_e2e() !void {
         &TestCopyPasteSelectedCellNoEdit.init(&app.state).test_step,
         &TestCopyPasteSelectedCellWithEdit.init(&app.state).test_step,
         &TestCopyPasteArea.init(&app.state).test_step,
+        &TestPasteThenMoveDoesntDelete.init(&app.state).test_step,
         &TestSingleCharExpr.init(&app.state).test_step,
         &TestSimpleExpr.init(&app.state).test_step,
         &TestEmptyExpr.init(&app.state).test_step,

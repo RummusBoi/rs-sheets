@@ -64,7 +64,7 @@ pub const SheetWindow = struct {
 
         c.SDL_SetWindowResizable(win, 1);
         // const before_create_renderer = std.time.milliTimestamp();
-        const renderer = c.SDL_CreateRenderer(win, 0, c.SDL_RENDERER_ACCELERATED | c.SDL_RENDERER_PRESENTVSYNC) orelse sdl_panic("Creating renderer");
+        const renderer = c.SDL_CreateRenderer(win, 0, c.SDL_RENDERER_ACCELERATED) orelse sdl_panic("Creating renderer");
         // const after_create_renderer = std.time.milliTimestamp();
 
         // std.debug.print("Creating renderer: {}\n", .{after_create_renderer - before_create_renderer});
@@ -246,6 +246,7 @@ pub const SheetWindow = struct {
                 sdl_panic("Could not render");
             }
         }
+
         if (!with_cursor) return;
         const timestamp = std.time.milliTimestamp();
         if (@rem(timestamp, 1000) < 500) return;

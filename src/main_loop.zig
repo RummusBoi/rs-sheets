@@ -50,15 +50,16 @@ pub const SpreadSheetApp = struct {
     is_holding_shift: bool = false,
     is_holding_cmd: bool = false,
     is_editing: bool = false,
-    did_just_paste: bool = false,
+    update_selected_area: bool = false,
     event_was_polled: bool = false,
     cell_was_updated: bool = false,
 
     frame: u64 = 0,
 
     filepath: []const u8,
+    print_frametimes: bool,
 
-    pub fn init(filepath: []const u8) !SpreadSheetApp {
+    pub fn init(filepath: []const u8, print_frametimes: bool, target_framerate: i32) !SpreadSheetApp {
         const startup = std.time.milliTimestamp();
 
         std.debug.print("Found filepath: {s}\n", .{filepath});
@@ -84,7 +85,7 @@ pub const SpreadSheetApp = struct {
         // const scroll_friction: f64 = 0.1;
         // const scroll_sensitivity: f64 = 10;
 
-        const time_per_frame: i128 = @intFromFloat(1.0 / @as(f32, @floatFromInt(60)) * @as(f32, 1000000000));
+        const time_per_frame: i128 = @intFromFloat(1.0 / @as(f32, @floatFromInt(target_framerate)) * @as(f32, 1000000000));
 
         // cells[0] = .{ .x = 0, .y = 0, .value = "hejsa" };
         // cells[1] = .{ .x = 10, .y = 0, .value = "hejsa v2" };
@@ -104,6 +105,7 @@ pub const SpreadSheetApp = struct {
             .time_per_frame = time_per_frame,
             .allocator = std.heap.c_allocator,
             .filepath = filepath,
+            .print_frametimes = print_frametimes,
         };
     }
     pub fn sleep_until_next_frame(self: *SpreadSheetApp) void {
@@ -116,7 +118,9 @@ pub const SpreadSheetApp = struct {
 
         const frametime: i32 = @intFromFloat(@as(f32, @floatFromInt(nanos_elapsed)) / @as(f32, @floatFromInt(1000000)));
         if (self.event_was_polled) {
-            std.debug.print("[Frame {}]Frametime: {}ms\n\n", .{ self.frame, frametime });
+            if (self.print_frametimes) {
+                std.debug.print("[Frame {}]Frametime: {}ms\n\n", .{ self.frame, frametime });
+            }
             self.frame += 1;
         }
     }
@@ -130,18 +134,26 @@ pub const SpreadSheetApp = struct {
         try self.display.draw_background();
         if (self.cell_was_updated) {
             if (self.selected_cell) |cell| {
-                const start = std.time.milliTimestamp();
+                const start = std.time.microTimestamp();
                 const count = sheet.refresh_cell_values_for_cell(&self.cells, cell, true);
-                const end = std.time.milliTimestamp();
-                std.debug.print("[Frame {}]Refreshing {} cells took {}ms\n", .{ self.frame, count, end - start });
+                const end = std.time.microTimestamp();
+                if (self.print_frametimes) {
+                    std.debug.print("[Frame {}]Refreshing {} cells took {}us\n", .{ self.frame, count, end - start });
+                }
             }
             // sheet.refresh_all_cell_values(&cells);
         }
-        if (self.did_just_paste) {
-            const start = std.time.milliTimestamp();
+        if (self.update_selected_area) {
+            self.update_selected_area = false;
+            const start = std.time.microTimestamp();
             if (self.selected_area) |area| {
-                for (@intCast(area.x)..@intCast(area.x + area.w)) |x| {
-                    for (@intCast(area.y)..@intCast(area.y + area.h)) |y| {
+                const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
+                const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
+                const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
+                const max_y = if (area.h > 0) area.y + area.h else (area.y + 1);
+
+                for (@intCast(min_x)..@intCast(max_x)) |x| {
+                    for (@intCast(min_y)..@intCast(max_y)) |y| {
                         const cell = self.cells.find(@intCast(x), @intCast(y)) orelse continue;
                         try cell.refresh_value(&self.cells, true);
                         // sheet.refresh_cell_values_for_cell(&cells, .{ .x = @intCast(x), .y = @intCast(y) });
@@ -155,20 +167,23 @@ pub const SpreadSheetApp = struct {
                 };
                 try cell.refresh_value(&self.cells, true);
             }
-            self.did_just_paste = false;
-            const end = std.time.milliTimestamp();
 
-            std.debug.print("[Frame {}]Refreshing values took {}ms", .{ self.frame, end - start });
+            const end = std.time.microTimestamp();
+
+            if (self.print_frametimes) {
+                std.debug.print("[Frame {}]Refreshing values took {}us", .{ self.frame, end - start });
+            }
         }
-        const start = std.time.milliTimestamp();
+        const start = std.time.microTimestamp();
         try sheet.render_cells(&self.state, &self.display, &self.cells, self.selected_cell, self.is_editing);
-        const end = std.time.milliTimestamp();
-        std.debug.print("[Frame {}]Rendering cells took {}ms\n", .{ self.frame, end - start });
-        std.debug.print("[Frame {}]Drew all cells\n", .{self.frame});
+        const end = std.time.microTimestamp();
+        if (self.print_frametimes) {
+            std.debug.print("[Frame {}]Rendering cells took {}us\n", .{ self.frame, end - start });
+        }
         if (self.selected_area) |area| {
             try sheet.render_selections(&self.state, &self.display, area);
         }
-        // const before_labels = std.time.milliTimestamp();
+        // const before_labels = std.time.microTimestamp();
 
         try sheet.render_row_labels(&self.state, &self.display, self.selected_area, self.selected_cell);
         try sheet.render_column_labels(&self.state, &self.display, self.selected_area, self.selected_cell);
@@ -288,7 +303,6 @@ pub const SpreadSheetApp = struct {
                     }
                 },
                 sheet_window.c.SDL_TEXTINPUT => {
-                    std.debug.print("Writing stuff to the cell", .{});
                     self.cell_was_updated = true; // we flip the bool here to ensure that we always update
                     if (!self.is_editing) {
                         self.is_editing = true;
@@ -355,7 +369,7 @@ pub const SpreadSheetApp = struct {
                                 if (self.is_editing) cell.value_delete() else cell.raw_value.items.len = 0;
                             }
                         } else if (self.selected_area) |area| {
-                            self.did_just_paste = true;
+                            self.update_selected_area = true;
                             const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
                             const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
                             const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
@@ -384,11 +398,17 @@ pub const SpreadSheetApp = struct {
                     }
                     const scancode = event.key.keysym.scancode;
                     if (scancode == sheet_window.c.SDL_SCANCODE_LEFT) {
+                        if (self.left_button_is_down) continue;
                         if (self.is_holding_shift) {
                             if (self.selected_cell) |cell| {
-                                self.selected_area = .{ .x = cell.x, .y = cell.y, .w = -2, .h = 1 };
+                                if (cell.x == 0) {
+                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = 1 };
+                                } else {
+                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = -2, .h = 1 };
+                                }
                                 self.selected_cell = null;
                             } else if (self.selected_area) |*area| {
+                                if (area.x == 0 and area.w == 1) continue; // special case where the user started selection at x=0
                                 if (area.x + area.w == -1) continue;
                                 if (area.w == 1) area.w = -2 else area.w -= 1;
                             }
@@ -399,10 +419,15 @@ pub const SpreadSheetApp = struct {
                                 _ = try self.cells.ensure_cell(cell.x, cell.y);
                             } else if (self.selected_area) |*area| {
                                 self.selected_cell = .{ .x = @max(area.x - 1, 0), .y = area.y };
+                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
+                                    std.debug.print("Failed when ensuring cell.", .{});
+                                    continue;
+                                };
                                 self.selected_area = null;
                             }
                         }
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_RIGHT) {
+                        if (self.left_button_is_down) continue;
                         if (self.is_holding_shift) {
                             if (self.selected_cell) |cell| {
                                 self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 2, .h = 1 };
@@ -417,10 +442,15 @@ pub const SpreadSheetApp = struct {
                                 _ = try self.cells.ensure_cell(cell.x, cell.y);
                             } else if (self.selected_area) |*area| {
                                 self.selected_cell = .{ .x = area.x + 1, .y = area.y };
+                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
+                                    std.debug.print("Failed when ensuring cell.", .{});
+                                    continue;
+                                };
                                 self.selected_area = null;
                             }
                         }
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_DOWN) {
+                        if (self.left_button_is_down) continue;
                         if (self.is_holding_shift) {
                             if (self.selected_cell) |cell| {
                                 self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = 2 };
@@ -435,15 +465,25 @@ pub const SpreadSheetApp = struct {
                                 _ = try self.cells.ensure_cell(cell.x, cell.y);
                             } else if (self.selected_area) |*area| {
                                 self.selected_cell = .{ .x = area.x, .y = area.y + 1 };
+                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
+                                    std.debug.print("Failed when ensuring cell.", .{});
+                                    continue;
+                                };
                                 self.selected_area = null;
                             }
                         }
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_UP) {
+                        if (self.left_button_is_down) continue;
                         if (self.is_holding_shift) {
                             if (self.selected_cell) |cell| {
-                                self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = -2 };
+                                if (cell.y == 0) { // special case where the user starts selection at y=0
+                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = 1 };
+                                } else {
+                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = -2 };
+                                }
                                 self.selected_cell = null;
                             } else if (self.selected_area) |*area| {
+                                if (area.y == 0 and area.h == 1) continue; // special case where the user started selection at y=0
                                 if (area.y + area.h == -1) continue;
                                 if (area.h == 1) area.h = -2 else area.h -= 1;
                             }
@@ -454,6 +494,10 @@ pub const SpreadSheetApp = struct {
                                 _ = try self.cells.ensure_cell(cell.x, cell.y);
                             } else if (self.selected_area) |*area| {
                                 self.selected_cell = .{ .x = area.x, .y = @max(area.y - 1, 0) };
+                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
+                                    std.debug.print("Failed when ensuring cell.", .{});
+                                    continue;
+                                };
                                 self.selected_area = null;
                             }
                         }
@@ -518,13 +562,11 @@ pub const SpreadSheetApp = struct {
                             if (sheet_window.c.SDL_SetClipboardText(clipboard_buffer.items.ptr) != 0) {
                                 std.debug.print("Could not set the clipboard to value '{any}", .{clipboard_buffer.items});
                                 break :blk;
-                            } else {
-                                std.debug.print("Set the clipboard to value '{any}'", .{clipboard_buffer.items});
                             }
                         }
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_V) blk: {
                         if (self.is_holding_cmd) {
-                            self.did_just_paste = true;
+                            self.update_selected_area = true;
 
                             const maybe_cell_coords = block: {
                                 if (self.selected_cell) |cell| break :block cell;
@@ -571,7 +613,9 @@ pub const SpreadSheetApp = struct {
                                             std.debug.print("Failed when ensure that cell existed.", .{});
                                             break :blk;
                                         };
-                                        curr_cell.raw_value.items.len = 0;
+                                        if (char != 0) {
+                                            curr_cell.raw_value.items.len = 0;
+                                        }
                                     } else {
                                         curr_cell.raw_value.append(char) catch {
                                             std.debug.print("Failed when appending cell value.", .{});

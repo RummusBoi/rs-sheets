@@ -53,9 +53,7 @@ pub fn refresh_all_cell_values(cells: *CellContainer) void {
     }
 }
 
-pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells: *CellContainer, selected_cell: ?CellCoords, is_editing: bool) !void {
-    // first we remove all the unused textures given our new values
-    // const value_slice = try std.heap.page_allocator.alloc([]u8, cells._cells.items.len * 2);
+pub fn run_gc_for_textures(sheet_window: *SheetWindow, cells: *CellContainer) !void {
     var value_set = std.StringHashMap(bool).init(cells.allocator);
     defer value_set.deinit();
 
@@ -63,7 +61,13 @@ pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells
         try value_set.put(cell.value.items, true);
         try value_set.put(cell.raw_value.items, true);
     }
+
     sheet_window.delete_unused_textures(value_set, "cell");
+}
+
+pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells: *CellContainer, selected_cell: ?CellCoords, is_editing: bool) !void {
+    // first we remove all the unused textures given our new values
+    // const value_slice = try std.heap.page_allocator.alloc([]u8, cells._cells.items.len * 2);
 
     const pixel_offset_x = state.x - constants.CELL_START_X;
     const pixel_offset_y = state.y - constants.CELL_START_Y;
@@ -75,7 +79,6 @@ pub fn render_cells(state: *const WindowState, sheet_window: *SheetWindow, cells
 
     var x: i32 = @max(cell_offset_x, 0);
     var found_selected_cell: ?*Cell = null;
-
     while (x < cell_offset_x + horizontal_cell_count) : (x += 1) {
         var y: i32 = @max(cell_offset_y, 0);
         while (y < cell_offset_y + vertical_cell_count) : (y += 1) {

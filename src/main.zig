@@ -52,29 +52,33 @@ fn return_true(_: *SpreadSheetApp) bool {
 }
 
 pub fn main() !void {
-    try run_e2e();
-    // var args = std.process.args();
-    // if (args.inner.count < 2) {
-    //     @panic("Expected exactly 2 arguments to program.");
-    // }
-    // if (args.inner.count > 2) {
-    //     @panic("Expected exactly 2 arguments to program.");
-    // }
-    // _ = args.skip(); // skip this file
-    // const filepath = args.next() orelse {
-    //     @panic("Something went wrong.");
-    // };
-    // var app = try SpreadSheetApp.init(filepath);
-    // try app.render_and_present_next_frame(true);
+    const do_e2e_test = true;
+    if (do_e2e_test) {
+        try run_e2e();
+    } else {
+        var args = std.process.args();
+        if (args.inner.count < 2) {
+            @panic("Expected exactly 2 arguments to program.");
+        }
+        if (args.inner.count > 2) {
+            @panic("Expected exactly 2 arguments to program.");
+        }
+        _ = args.skip(); // skip this file
+        const filepath = args.next() orelse {
+            @panic("Something went wrong.");
+        };
+        var app = try SpreadSheetApp.init(filepath, true, 60);
+        try app.render_and_present_next_frame(true);
 
-    // var event_poller = StandardEventPoller.init();
-    // while (true) {
-    //     if (try app.update(&event_poller.event_poller)) {
-    //         return;
-    //     }
-    //     // try app.update();
+        var event_poller = StandardEventPoller.init();
+        while (true) {
+            if (try app.update(&event_poller.event_poller)) {
+                return;
+            }
+            // try app.update();
 
-    //     try app.render_and_present_next_frame(false);
-    //     app.sleep_until_next_frame();
-    // }
+            try app.render_and_present_next_frame(false);
+            app.sleep_until_next_frame();
+        }
+    }
 }
