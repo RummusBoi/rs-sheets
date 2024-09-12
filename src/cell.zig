@@ -134,7 +134,7 @@ pub const Cell = struct {
                 }
             }
             // check for emptyness. Remember that it is null-terminated!
-            if (expr.len <= 1) {
+            if (expr.len == 0) {
                 const error_message = "Invalid expression";
                 try self.value.appendSlice(error_message);
                 return;

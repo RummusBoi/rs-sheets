@@ -897,27 +897,493 @@ const TestCopyPasteArea = struct {
     }
 };
 
+const TestSingleCharExpr = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestSingleCharExpr {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=5")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_RETURN)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestSingleCharExpr{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 10) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=5", cell.raw_value.items);
+        try std.testing.expectEqualStrings("5", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestSimpleExpr = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestSimpleExpr {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=5/5+5*5")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_RETURN)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestSimpleExpr{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 10) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=5/5+5*5", cell.raw_value.items);
+        try std.testing.expectEqualStrings("26", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestTinyExprFuncExpr = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestTinyExprFuncExpr {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=pow(2,3)")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_RETURN)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestTinyExprFuncExpr{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 10) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=pow(2,3)", cell.raw_value.items);
+        try std.testing.expectEqualStrings("8", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestEmptyExpr = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestEmptyExpr {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_RETURN)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestEmptyExpr{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 10) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=", cell.raw_value.items);
+        try std.testing.expectEqualStrings("Invalid expression", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestDependencyOnOneCell = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestDependencyOnOneCell {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_cell(state, 0, 11)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_RETURN)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestDependencyOnOneCell{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("200", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestUpdatingDependencyOneCellUsingClick = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestUpdatingDependencyOneCellUsingClick {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_cell(state, 0, 11)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_RETURN)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestUpdatingDependencyOneCellUsingClick{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("400", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestUpdatingDependencyOneCellUsingKeyboard = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestUpdatingDependencyOneCellUsingKeyboard {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestUpdatingDependencyOneCellUsingKeyboard{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("400", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestCopyExpressionInstantlySetsValue = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestCopyExpressionInstantlySetsValue {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&select_area(state, 0, 11, 0, 11)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_copy()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_right()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_paste()) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestCopyExpressionInstantlySetsValue{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(1, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("200", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestCopyExpressionAndUpdatingDependency = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestCopyExpressionAndUpdatingDependency {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&select_area(state, 0, 11, 0, 11)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_copy()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_right()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_paste()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_left()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestCopyExpressionAndUpdatingDependency{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(1, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("400", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestDependingOnMultipleCells = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestDependingOnMultipleCells {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_right()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_left()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2+B10*2")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestDependingOnMultipleCells{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2+B10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("600", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestDependingOnMultipleCellsUpdate1 = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestDependingOnMultipleCellsUpdate1 {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_right()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_left()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2+B10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("50")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestDependingOnMultipleCellsUpdate1{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2+B10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("500", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestDependingOnMultipleCellsUpdate2 = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestDependingOnMultipleCellsUpdate2 {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_right()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_left()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2+B10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_right()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("50")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestDependingOnMultipleCellsUpdate2{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 11) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2+B10*2", cell.raw_value.items);
+        try std.testing.expectEqualStrings("300", cell.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestDependencyChainLength3Update1 = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestDependencyChainLength3Update1 {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A11*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("50")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestDependencyChainLength3Update1{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell_2 = app.cells.find(0, 11) orelse return error.NoCellFound;
+        const cell_3 = app.cells.find(0, 12) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2", cell_2.raw_value.items);
+        try std.testing.expectEqualStrings("100", cell_2.value.items);
+        try std.testing.expectEqualStrings("=A11*2", cell_3.raw_value.items);
+        try std.testing.expectEqualStrings("200", cell_3.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestDependencyChainLength3Update2 = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestDependencyChainLength3Update2 {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A11*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_up()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*3")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestDependencyChainLength3Update2{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell_2 = app.cells.find(0, 11) orelse return error.NoCellFound;
+        const cell_3 = app.cells.find(0, 12) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*3", cell_2.raw_value.items);
+        try std.testing.expectEqualStrings("300", cell_2.value.items);
+        try std.testing.expectEqualStrings("=A11*2", cell_3.raw_value.items);
+        try std.testing.expectEqualStrings("600", cell_3.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestDependencyChainLength3Delete1 = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestDependencyChainLength3Delete1 {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A10*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=A11*2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_key(sheet_window.c.SDLK_BACKSPACE)) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestDependencyChainLength3Delete1{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell_2 = app.cells.find(0, 11) orelse return error.NoCellFound;
+        const cell_3 = app.cells.find(0, 12) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=A10*2", cell_2.raw_value.items);
+        try std.testing.expectEqualStrings("0", cell_2.value.items);
+        try std.testing.expectEqualStrings("=A11*2", cell_3.raw_value.items);
+        try std.testing.expectEqualStrings("0", cell_3.value.items);
+        // check that the paste wrote data
+    }
+};
+
+const TestTinyExprAndCellRef = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestTinyExprAndCellRef {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("2")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=pow(A10,A11)")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestTinyExprAndCellRef{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 12) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=pow(A10,A11)", cell.raw_value.items);
+        try std.testing.expectEqualStrings("10000", cell.value.items);
+    }
+};
+
 pub fn run_e2e() !void {
     var app = try SpreadSheetApp.init("/Users/dkRaHySa/Desktop/programs/rs-sheets/src/assets/e2e_test.csv");
     try app.render_and_present_next_frame(true);
-    const step_1 = TestEnterDataInSingleCell.init(&app.state);
-    const step_2 = TestSelectedCell.init(&app.state);
-    const step_3 = TestEnterEnablesEdit.init(&app.state);
-    const step_4 = TestMovingDuringEdit.init(&app.state);
-    const step_5 = TestKeyboardNavigation.init(&app.state);
-    const step_6 = TestOutOfBoundKeyboard.init(&app.state);
-    const step_7 = TestAreaSelectClearsCell.init(&app.state);
-    const step_8 = TestSelectCellClearsArea.init(&app.state);
-    const step_9 = TestArrowAfterAreaSelect.init(&app.state);
-    const step_10 = TestArrowAfterAreaSelect2.init(&app.state);
-    const step_11 = TestEnterAfterAreaSelect.init(&app.state);
-    const step_12 = TestTextInputAfterAreaSelect.init(&app.state);
-    const step_13 = TestCopySelectedCell.init(&app.state);
-    const step_14 = TestCopyPasteSelectedCellNoEdit.init(&app.state);
-    const step_15 = TestCopyPasteSelectedCellWithEdit.init(&app.state);
-    const step_16 = TestCopyPasteArea.init(&app.state);
 
-    const steps: [16]*const TestStep = .{ &step_1.test_step, &step_2.test_step, &step_3.test_step, &step_4.test_step, &step_5.test_step, &step_6.test_step, &step_7.test_step, &step_8.test_step, &step_9.test_step, &step_10.test_step, &step_11.test_step, &step_12.test_step, &step_13.test_step, &step_14.test_step, &step_15.test_step, &step_16.test_step };
+    const steps = [_]*const TestStep{
+        &TestEnterDataInSingleCell.init(&app.state).test_step,
+        &TestSelectedCell.init(&app.state).test_step,
+        &TestEnterEnablesEdit.init(&app.state).test_step,
+        &TestMovingDuringEdit.init(&app.state).test_step,
+        &TestKeyboardNavigation.init(&app.state).test_step,
+        &TestOutOfBoundKeyboard.init(&app.state).test_step,
+        &TestAreaSelectClearsCell.init(&app.state).test_step,
+        &TestSelectCellClearsArea.init(&app.state).test_step,
+        &TestArrowAfterAreaSelect.init(&app.state).test_step,
+        &TestArrowAfterAreaSelect2.init(&app.state).test_step,
+        &TestEnterAfterAreaSelect.init(&app.state).test_step,
+        &TestTextInputAfterAreaSelect.init(&app.state).test_step,
+        &TestCopySelectedCell.init(&app.state).test_step,
+        &TestCopyPasteSelectedCellNoEdit.init(&app.state).test_step,
+        &TestCopyPasteSelectedCellWithEdit.init(&app.state).test_step,
+        &TestCopyPasteArea.init(&app.state).test_step,
+        &TestSingleCharExpr.init(&app.state).test_step,
+        &TestSimpleExpr.init(&app.state).test_step,
+        &TestEmptyExpr.init(&app.state).test_step,
+        &TestDependencyOnOneCell.init(&app.state).test_step,
+        &TestUpdatingDependencyOneCellUsingClick.init(&app.state).test_step,
+        &TestUpdatingDependencyOneCellUsingKeyboard.init(&app.state).test_step,
+        &TestCopyExpressionInstantlySetsValue.init(&app.state).test_step,
+        &TestCopyExpressionAndUpdatingDependency.init(&app.state).test_step,
+        &TestDependingOnMultipleCells.init(&app.state).test_step,
+        &TestDependingOnMultipleCellsUpdate1.init(&app.state).test_step,
+        &TestDependingOnMultipleCellsUpdate2.init(&app.state).test_step,
+        &TestDependencyChainLength3Update1.init(&app.state).test_step,
+        &TestDependencyChainLength3Update2.init(&app.state).test_step,
+        &TestDependencyChainLength3Delete1.init(&app.state).test_step,
+        &TestTinyExprAndCellRef.init(&app.state).test_step,
+    };
 
     var event_poller = TestEventPoller.init(&steps, &app);
     while (true) {
