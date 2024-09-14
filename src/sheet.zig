@@ -169,3 +169,10 @@ pub const Area = struct {
     w: i32,
     h: i32,
 };
+
+pub const Direction = enum {
+    Up,
+    Right,
+    Down,
+    Left,
+};
