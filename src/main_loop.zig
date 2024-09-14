@@ -135,7 +135,8 @@ pub const SpreadSheetApp = struct {
         if (self.cell_was_updated) {
             if (self.selected_cell) |cell| {
                 const start = std.time.microTimestamp();
-                const count = sheet.refresh_cell_values_for_cell(&self.cells, cell, true);
+                var skip_cells = std.ArrayList(*Cell).init(self.allocator);
+                const count = sheet.refresh_cell_values_for_cell(&self.cells, cell, &skip_cells, true);
                 const end = std.time.microTimestamp();
                 if (self.print_frametimes) {
                     std.debug.print("[Frame {}]Refreshing {} cells took {}us\n", .{ self.frame, count, end - start });

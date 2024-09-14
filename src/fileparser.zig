@@ -9,7 +9,7 @@ const CsvError = error{
 // this file is responsible for reading the given CSV file and return a CellContainer with all the given data in it.
 //
 pub fn read_cells_from_csv_file(allocator: std.mem.Allocator, path: []const u8) !CellContainer {
-    const file = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
+    const file = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
     const contents = try file.readToEndAlloc(allocator, 100000000); // 100mb
     defer allocator.free(contents);
 

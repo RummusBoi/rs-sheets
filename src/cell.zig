@@ -183,7 +183,32 @@ pub const Cell = struct {
         return .{ result_str.items, refs.items };
     }
 
+    pub fn depends_on_itself(self: *Cell, cells: *CellContainer) !bool {
+        var cells_to_check = std.ArrayList(*Cell).init(cells.allocator);
+        try cells_to_check.append(self);
+        var index: usize = 0;
+        while (index < cells_to_check.items.len) : (index += 1) {
+            const cell = cells_to_check.items[index];
+            const deps = cells.dependencies.getEntry(get_cell_id(cell.x, cell.y)) orelse continue;
+            for (deps.value_ptr.items) |dependency| {
+                const dep_coords = get_cell_pos(dependency);
+                const dep_cell = cells.find(dep_coords.x, dep_coords.y) orelse continue;
+                if (dep_cell == self) {
+                    return true;
+                }
+                const already_checked_this = std.mem.containsAtLeast(*Cell, cells_to_check.items, 1, &.{dep_cell});
+                if (!already_checked_this) {
+                    try cells_to_check.append(dep_cell);
+                }
+            }
+        }
+        return false;
+    }
+
     pub fn refresh_value(self: *Cell, cells: *CellContainer, modify_deps: bool) !void {
+        if (modify_deps) {
+            cells.remove_all_dependencies(self.x, self.y);
+        }
         if (self.raw_value.items.len == 0) {
             self.value.items.len = 0;
             return;
@@ -211,7 +236,6 @@ pub const Cell = struct {
             defer self.allocator.free(replaced_expr);
             defer self.allocator.free(references);
             if (modify_deps) {
-                cells.remove_all_dependencies(self.x, self.y);
                 for (references) |ref| {
                     try cells.register_dependency(self.x, self.y, get_cell_pos(ref).x, get_cell_pos(ref).y);
                 }
@@ -222,7 +246,16 @@ pub const Cell = struct {
                 try self.value.appendSlice(error_message);
                 return;
             }
-
+            const has_circular_dependency = self.depends_on_itself(cells) catch {
+                std.debug.print("Could not check for circular dependency.", .{});
+                try self.value.appendSlice("Internal error");
+                return;
+            };
+            if (has_circular_dependency) {
+                std.debug.print("Detected circular dependency for cell {}, {}\n", .{ self.x, self.y });
+                try self.value.appendSlice("Circular dependency");
+                return;
+            }
             const null_terminated_expr = try self.allocator.dupeZ(u8, replaced_expr[1..]);
             defer self.allocator.free(null_terminated_expr);
             const result = tinyexpr.te_interp(null_terminated_expr, 0);
@@ -257,7 +290,7 @@ pub const Cell = struct {
 
 const CellId = i32;
 
-fn get_cell_id(x: i32, y: i32) CellId {
+pub fn get_cell_id(x: i32, y: i32) CellId {
     const a = 10000 * x + y;
     return a;
 }
@@ -361,17 +394,21 @@ pub const CellContainer = struct {
         errdefer result.deinit();
         try remaining_cells.append(self.find(x, y) orelse return &.{});
         var index: usize = 0;
+        std.debug.print("Getting cells depending on {}, {}\n", .{ x, y });
         while (index < remaining_cells.items.len) : (index += 1) {
             // std.debug.print("Remaining cells: {any}\n", .{remaining_cells.items});
             const cell = remaining_cells.items[index];
             // the first cell is "this cell", and that doesnt depend on itself
-            if (index > 0) {
+            if (cell.x != x or cell.y != y) {
                 try result.append(cell);
             }
             if (self.reverse_dependencies.get(get_cell_id(cell.x, cell.y))) |reverse_dependencies| {
                 for (reverse_dependencies.items) |rev_dep| {
                     const this_cell = self.find(get_cell_pos(rev_dep).x, get_cell_pos(rev_dep).y) orelse continue;
-                    try remaining_cells.append(this_cell);
+                    const already_checked_this = std.mem.containsAtLeast(*Cell, remaining_cells.items, 1, &.{this_cell});
+                    if (!already_checked_this) {
+                        try remaining_cells.append(this_cell);
+                    }
                 }
             }
         }
@@ -617,4 +654,110 @@ test "replace three refs" {
     try std.testing.expectEqual(0, refs[0]);
     try std.testing.expectEqual(10000, refs[1]);
     try std.testing.expectEqual(20005, refs[2]);
+}
+
+test "Depends directly on itself" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=A0");
+    try cell_0_0.refresh_value(&cells, true);
+    const result = try cell_0_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(true, result);
+}
+
+test "Part of cycle 2 elems" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=B0");
+    const cell_1_0 = try cells.add_cell(1, 0, "=A0");
+    try cell_0_0.refresh_value(&cells, true);
+    try cell_1_0.refresh_value(&cells, true);
+    const result = try cell_1_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(true, result);
+}
+
+test "Complex graph true" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=B0+C0+A1");
+    const cell_0_1 = try cells.add_cell(0, 1, "=15");
+    const cell_1_0 = try cells.add_cell(1, 0, "=D0");
+    const cell_2_0 = try cells.add_cell(2, 0, "=A0");
+    const cell_3_0 = try cells.add_cell(3, 0, "=A0");
+    try cell_0_0.refresh_value(&cells, true);
+    try cell_0_1.refresh_value(&cells, true);
+    try cell_1_0.refresh_value(&cells, true);
+    try cell_2_0.refresh_value(&cells, true);
+    try cell_3_0.refresh_value(&cells, true);
+    const result = try cell_0_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(true, result);
+}
+
+test "Complex graph false" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=B0+C0+A1");
+    const cell_0_1 = try cells.add_cell(0, 1, "=15");
+    const cell_1_0 = try cells.add_cell(1, 0, "=D0");
+    const cell_2_0 = try cells.add_cell(2, 0, "=D0");
+    const cell_3_0 = try cells.add_cell(3, 0, "5");
+    try cell_0_0.refresh_value(&cells, true);
+    try cell_0_1.refresh_value(&cells, true);
+    try cell_1_0.refresh_value(&cells, true);
+    try cell_2_0.refresh_value(&cells, true);
+    try cell_3_0.refresh_value(&cells, true);
+    const result = try cell_0_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(false, result);
+}
+
+test "Subgraph with circular dependency true" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=B0+C0+A1");
+    const cell_0_1 = try cells.add_cell(0, 1, "=15");
+    const cell_1_0 = try cells.add_cell(1, 0, "=D0");
+    const cell_2_0 = try cells.add_cell(2, 0, "=C0");
+    const cell_3_0 = try cells.add_cell(3, 0, "=A0");
+    try cell_0_0.refresh_value(&cells, true);
+    try cell_0_1.refresh_value(&cells, true);
+    try cell_1_0.refresh_value(&cells, true);
+    try cell_2_0.refresh_value(&cells, true);
+    try cell_3_0.refresh_value(&cells, true);
+    const result = try cell_0_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(true, result);
+}
+
+test "Subgraph with circular dependency false" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=B0+C0+A1");
+    const cell_0_1 = try cells.add_cell(0, 1, "=15");
+    const cell_1_0 = try cells.add_cell(1, 0, "=D0");
+    const cell_2_0 = try cells.add_cell(2, 0, "=C0");
+    const cell_3_0 = try cells.add_cell(3, 0, "=15");
+    try cell_0_0.refresh_value(&cells, true);
+    try cell_0_1.refresh_value(&cells, true);
+    try cell_1_0.refresh_value(&cells, true);
+    try cell_2_0.refresh_value(&cells, true);
+    try cell_3_0.refresh_value(&cells, true);
+    const result = try cell_0_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(false, result);
+}
+
+test "Subgraph with invalid expr false" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=B0+C0");
+    const cell_0_1 = try cells.add_cell(0, 1, "=D");
+    const cell_1_0 = try cells.add_cell(1, 0, "=15");
+    try cell_0_0.refresh_value(&cells, true);
+    try cell_0_1.refresh_value(&cells, true);
+    try cell_1_0.refresh_value(&cells, true);
+    const result = try cell_0_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(false, result);
+}
+
+test "Subgraph with invalid expr true" {
+    var cells = try CellContainer.init(0, std.heap.c_allocator);
+    const cell_0_0 = try cells.add_cell(0, 0, "=B0+C0");
+    const cell_0_1 = try cells.add_cell(0, 1, "=D");
+    const cell_1_0 = try cells.add_cell(1, 0, "=A0");
+    try cell_0_0.refresh_value(&cells, true);
+    try cell_0_1.refresh_value(&cells, true);
+    try cell_1_0.refresh_value(&cells, true);
+    const result = try cell_0_0.depends_on_itself(&cells);
+    try std.testing.expectEqual(true, result);
 }

@@ -3,9 +3,12 @@
 const WindowState = @import("window_state.zig").WindowState;
 const SheetWindow = @import("sheet_window.zig").SheetWindow;
 const Cell = @import("cell.zig").Cell;
+const get_cell_id = @import("cell.zig").get_cell_id;
+const get_cell_pos = @import("cell.zig").get_cell_pos;
 const column_to_chars = @import("cell.zig").column_to_chars;
 const CellContainer = @import("cell.zig").CellContainer;
 const constants = @import("constants.zig");
+const helpers = @import("helpers.zig");
 const std = @import("std");
 
 pub fn cell_to_pixel(
@@ -27,20 +30,32 @@ pub fn pixel_to_cell(
     return .{ .x = x, .y = y };
 }
 
-pub fn refresh_cell_values_for_cell(cells: *CellContainer, coords: CellCoords, modify_deps: bool) usize {
+pub fn refresh_cell_values_for_cell(cells: *CellContainer, coords: CellCoords, skip_cells: *std.ArrayList(*Cell), modify_deps: bool) usize {
     const this_cell = cells.find(coords.x, coords.y) orelse return 0;
     this_cell.refresh_value(cells, modify_deps) catch {
         std.debug.print("Could not update cell.", .{});
         return 0;
     };
-    const cells_to_update = cells.get_cells_depending_on_this(coords.x, coords.y) catch {
+    var cells_to_update = cells.get_cells_depending_on_this(coords.x, coords.y) catch {
         std.debug.print("Could not fetch cells to update.", .{});
         return 0;
     };
     defer cells.allocator.free(cells_to_update);
+    var index: usize = cells_to_update.len;
+    while (index > 0) {
+        index -= 1;
+        const cell = cells_to_update[index];
+        if (std.mem.indexOfScalar(*Cell, skip_cells.items, cell) != null) {
+            cells_to_update = helpers.swap_remove(*Cell, cells_to_update, index);
+        }
+    }
+    skip_cells.append(this_cell) catch {
+        std.debug.print("Could not update skip cells arraylist", .{});
+        return 0;
+    };
     var total_updates: usize = 1;
     for (cells_to_update) |cell| {
-        total_updates += refresh_cell_values_for_cell(cells, .{ .x = cell.x, .y = cell.y }, false);
+        total_updates += refresh_cell_values_for_cell(cells, .{ .x = cell.x, .y = cell.y }, skip_cells, false);
     }
     return total_updates;
 }
