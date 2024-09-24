@@ -215,8 +215,6 @@ pub const SpreadSheetApp = struct {
                     self.prev_frame_wheel_y = preciseY;
                     const total_vel = std.math.sqrt(preciseX * preciseX + preciseY * preciseY);
                     const scaled_vel = @abs(5 * total_vel + 2 * @abs(std.math.pow(f64, total_vel, 2)));
-                    std.debug.print("Total vel: {}\n", .{total_vel});
-                    std.debug.print("Scaled vel: {}\n", .{scaled_vel});
                     if (scaled_vel < 0.0001) {
                         break :blk;
                     }

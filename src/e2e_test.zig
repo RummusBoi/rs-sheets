@@ -1509,6 +1509,62 @@ const TestTinyExprAndCellRef = struct {
     }
 };
 
+const TestSumOfRange = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestTinyExprAndCellRef {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("300")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=SUM(A10:A12)")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestTinyExprAndCellRef{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 12) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=SUM(A10:A12)", cell.raw_value.items);
+        try std.testing.expectEqualStrings("600", cell.value.items);
+    }
+};
+
+const TestInvalidFunction = struct {
+    test_step: TestStep,
+    pub fn init(state: *WindowState) TestTinyExprAndCellRef {
+        var event_arr = std.ArrayList(sheet_window.c.union_SDL_Event).init(std.heap.c_allocator);
+
+        event_arr.appendSlice(&click_cell(state, 0, 10)) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("100")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("200")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("300")) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&click_down()) catch @panic("Could not allocate memory.");
+        event_arr.appendSlice(&enter_text("=SUM(A10:A12)")) catch @panic("Could not allocate memory.");
+
+        const test_step = TestStep{
+            .events = event_arr.items,
+            .verifier = verifier,
+        };
+        return TestTinyExprAndCellRef{ .test_step = test_step };
+    }
+    pub fn verifier(_: *const TestStep, app: *SpreadSheetApp) !void {
+        const cell = app.cells.find(0, 12) orelse return error.NoCellFound;
+
+        try std.testing.expectEqualStrings("=SUM(A10:A12)", cell.raw_value.items);
+        try std.testing.expectEqualStrings("600", cell.value.items);
+    }
+};
+
 pub fn run_e2e() !void {
     var app = try SpreadSheetApp.init("src/assets/e2e_test.csv", false, 500);
     try app.render_and_present_next_frame(true);
