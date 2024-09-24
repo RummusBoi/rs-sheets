@@ -1510,7 +1510,7 @@ const TestTinyExprAndCellRef = struct {
 };
 
 pub fn run_e2e() !void {
-    var app = try SpreadSheetApp.init("src/assets/e2e_test.csv", false, 1000);
+    var app = try SpreadSheetApp.init("src/assets/e2e_test.csv", false, 500);
     try app.render_and_present_next_frame(true);
 
     const steps = [_]*const TestStep{

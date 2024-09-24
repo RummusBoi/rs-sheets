@@ -38,68 +38,114 @@ pub const Cell = struct {
         return .{ .x = x, .y = y, .raw_value = raw_value, .value = calculated_value, .allocator = allocator };
     }
 
-    fn find_all_references(self: *Cell) ![]struct { usize, usize, CellId } {
-        var refs = std.ArrayList(struct { usize, usize, CellId }).init(self.allocator);
-        errdefer refs.deinit();
-
-        var reference_start: ?usize = null;
-        var reference_number_start: ?usize = null;
-        for (1..self.raw_value.items.len + 1) |index| {
-            const char: u8 = if (index < self.raw_value.items.len) self.raw_value.items[index] else 0;
-            const is_uppercase = char >= constants.capitals_min and char <= constants.capitals_max;
-            const is_lowercase = char >= constants.lower_min and char <= constants.lower_max;
-
-            const is_letter = is_lowercase or is_uppercase;
-            const is_number = char >= 48 and char <= 57;
-
-            if (is_letter and reference_start == null) {
-                reference_start = index;
-            } else if (is_number and reference_start != null and reference_number_start == null) {
-                reference_number_start = index;
-            } else if (reference_start != null and reference_number_start != null and !is_number) {
-                // we have now finished a reference and the state is stored in reference_start and reference_number_start.
-                const letter_part = self.raw_value.items[reference_start.?..reference_number_start.?];
-                const number_part = self.raw_value.items[reference_number_start.?..index];
-
-                const x = try chars_to_column(letter_part);
-                const y = try std.fmt.parseInt(u8, number_part, 10);
-
-                try refs.append(.{ reference_start.?, index - reference_start.?, get_cell_id(x, y) });
-
-                reference_start = null;
-                reference_number_start = null;
-            } else if (reference_start != null and reference_number_start != null and is_number) {
-                continue;
-            } else {
-                reference_start = null;
-                reference_number_start = null;
+    pub fn find_references(self: *Cell, value: []u8) ![]struct { usize, usize, CellPos } {
+        var idx: usize = 0;
+        var refs = std.ArrayList(struct { usize, usize, CellPos }).init(self.allocator);
+        while (idx < value.len) {
+            if (parse_cell_ref(value, idx)) |ref| {
+                try refs.append(.{ idx, ref.len, ref.cell_pos });
             }
-        }
-        // _ = std.mem.replace(u8, result_str.items, ",", ".", result_str.items);
 
+            idx += 1;
+        }
         return refs.items;
     }
 
-    fn replace_stuff(self: *Cell, cells: *CellContainer) !struct {
+    pub fn unfold_raw_value(self: *Cell, output_buffer: []u8) []u8 {
+        const input = self.raw_value.items;
+        var input_idx: usize = 0;
+        var output_idx: usize = 0;
+
+        while (input_idx < input.len) {
+            const c = input[input_idx];
+            if (c >= 'A' and c <= 'Z') blk: {
+                const range = parse_range(input, input_idx) orelse break :blk;
+                // Range successfully parsed
+                // Expand the range
+                std.debug.print("[Cell: {}, {}]Range: {any}\n", .{ self.x, self.y, range });
+                input_idx += range.len;
+
+                const start_col: usize = @intCast(@min(range.start_cell.x, range.end_cell.x));
+                const end_col: usize = @intCast(@max(range.start_cell.x, range.end_cell.x));
+                const start_row: usize = @intCast(@min(range.start_cell.y, range.end_cell.y));
+                const end_row: usize = @intCast(@max(range.start_cell.y, range.end_cell.y));
+                std.debug.print("[Cell: {}, {}]Start col: {}, end col: {}, start row: {}, end row: {}\n", .{ self.x, self.y, start_col, end_col, start_row, end_row });
+                var first_cell_in_range = true;
+                // For col in start_col to end_col
+                for (start_col..end_col + 1) |col_num| {
+                    var col_str_buf: [10]u8 = undefined;
+                    const col_str = num_to_col_str(@intCast(col_num), &col_str_buf) orelse break :blk;
+
+                    // For row in start_row to end_row
+                    for (start_row..end_row + 1) |row_num| {
+                        // Append ',' if not the first cell
+                        if (!first_cell_in_range) {
+                            if (output_idx >= output_buffer.len) {
+                                // Output buffer overflow
+                                return output_buffer[0..output_idx];
+                            }
+                            output_buffer[output_idx] = ',';
+                            output_idx += 1;
+                        } else {
+                            first_cell_in_range = false;
+                        }
+
+                        // Append col_str
+                        if (output_idx + col_str.len > output_buffer.len) {
+                            // Output buffer overflow
+                            @panic("Buffer overflow in outputbuffer");
+                        }
+                        std.mem.copyForwards(u8, output_buffer[output_idx..], col_str);
+                        output_idx += col_str.len;
+
+                        // Append row number
+                        var row_str_buf: [10]u8 = undefined;
+                        const actual_row_str = std.fmt.bufPrint(&row_str_buf, "{}", .{row_num}) catch {
+                            // Error formatting row number
+                            continue;
+                        };
+                        if (output_idx + actual_row_str.len > output_buffer.len) {
+                            // Output buffer overflow
+                            @panic("Buffer overflow in outputbuffer");
+                        }
+                        std.mem.copyForwards(u8, output_buffer[output_idx..], row_str_buf[0..actual_row_str.len]);
+                        output_idx += actual_row_str.len;
+                    }
+                }
+                continue;
+            }
+            // Copy the current character to output
+            if (output_idx >= output_buffer.len) {
+                // Output buffer overflow
+                return output_buffer[0..output_idx];
+            }
+            output_buffer[output_idx] = input[input_idx];
+            output_idx += 1;
+            input_idx += 1;
+        }
+        return output_buffer[0..output_idx];
+    }
+
+    fn replace_exprs(self: *Cell, cells: *CellContainer) !struct {
         []u8,
-        []CellId,
+        []CellPos,
     } {
         var result_str = std.ArrayList(u8).init(self.allocator);
         errdefer result_str.deinit();
-
-        const refs = try self.find_all_references();
-
+        var unfolded_values: [32]u8 = .{0} ** 32;
+        const unfolded_raw_value = self.unfold_raw_value(&unfolded_values);
+        const refs = try self.find_references(unfolded_raw_value);
         defer cells.allocator.free(refs);
 
-        try result_str.appendSlice(self.raw_value.items);
+        try result_str.appendSlice(unfolded_raw_value);
         var scratch_buf = std.ArrayList(u8).init(self.allocator);
 
         var offset: isize = 0;
 
         for (refs) |ref| {
             scratch_buf.clearRetainingCapacity();
-            const position, const len, const other_cell_coords = ref;
-            const other_cell = cells.find(get_cell_pos(other_cell_coords).x, get_cell_pos(other_cell_coords).y) orelse continue;
+            const position, const len, const other_cell_pos = ref;
+            const other_cell = cells.find(other_cell_pos.x, other_cell_pos.y) orelse continue;
             const value = other_cell.value;
             try scratch_buf.appendSlice(result_str.items[@intCast(@as(isize, @intCast(position)) + offset + @as(isize, @intCast(len)))..]);
             // result_str.resize(new_len: usize)
@@ -114,7 +160,7 @@ pub const Cell = struct {
             offset = offset + @as(isize, @intCast(other_cell.value.items.len)) - @as(isize, @intCast(len));
         }
 
-        const refs_to_return = try cells.allocator.alloc(CellId, refs.len);
+        const refs_to_return = try cells.allocator.alloc(CellPos, refs.len);
         for (0..refs.len) |index| {
             refs_to_return[index] = refs[index][2];
         }
@@ -126,7 +172,7 @@ pub const Cell = struct {
         []CellId,
     } {
         // Replaces all single cell references with that cell's current value.
-        _ = try self.find_all_references();
+        // _ = try self.find_references(value.items);
         // NOTE: The caller must free the return slices
         //  Examples: A2, A13, AA27
 
@@ -227,7 +273,7 @@ pub const Cell = struct {
                 return;
             }
             const expr = self.raw_value.items[1..];
-            const replaced_expr, const references = self.replace_stuff(cells) catch {
+            const replaced_expr, const references = self.replace_exprs(cells) catch {
                 const error_message = "Invalid expression";
                 try self.value.appendSlice(error_message);
                 return;
@@ -237,7 +283,7 @@ pub const Cell = struct {
             defer self.allocator.free(references);
             if (modify_deps) {
                 for (references) |ref| {
-                    try cells.register_dependency(self.x, self.y, get_cell_pos(ref).x, get_cell_pos(ref).y);
+                    try cells.register_dependency(self.x, self.y, ref.x, ref.y);
                 }
             }
             // check for emptyness. Remember that it is null-terminated!
@@ -247,12 +293,10 @@ pub const Cell = struct {
                 return;
             }
             const has_circular_dependency = self.depends_on_itself(cells) catch {
-                std.debug.print("Could not check for circular dependency.", .{});
                 try self.value.appendSlice("Internal error");
                 return;
             };
             if (has_circular_dependency) {
-                std.debug.print("Detected circular dependency for cell {}, {}\n", .{ self.x, self.y });
                 try self.value.appendSlice("Circular dependency");
                 return;
             }
@@ -376,15 +420,6 @@ pub const CellContainer = struct {
             }
             dependencies.value_ptr.clearRetainingCapacity();
         }
-        // if (self.reverse_dependencies.getEntry(get_cell_id(x, y))) |reverse_dependencies| {
-        //     for (reverse_dependencies.value_ptr.items) |reverse_dependency| {
-        //         var dependencies = self.dependencies.getEntry(reverse_dependency) orelse continue;
-        //         if (std.mem.indexOfScalar(CellId, dependencies.value_ptr.items, get_cell_id(x, y))) |index| {
-        //             _ = dependencies.value_ptr.swapRemove(index);
-        //         }
-        //     }
-        //     reverse_dependencies.value_ptr.clearRetainingCapacity();
-        // }
     }
 
     pub fn get_cells_depending_on_this(self: *CellContainer, x: i32, y: i32) ![]*Cell {
@@ -394,7 +429,6 @@ pub const CellContainer = struct {
         errdefer result.deinit();
         try remaining_cells.append(self.find(x, y) orelse return &.{});
         var index: usize = 0;
-        std.debug.print("Getting cells depending on {}, {}\n", .{ x, y });
         while (index < remaining_cells.items.len) : (index += 1) {
             // std.debug.print("Remaining cells: {any}\n", .{remaining_cells.items});
             const cell = remaining_cells.items[index];
@@ -430,8 +464,8 @@ test "asd" {
 
     while (iter.next()) |dependency| {
         const entry = cells.dependencies.get(dependency.*).?;
-        for (entry.items) |item| {
-            std.debug.print("Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        for (entry.items) |_| {
+            // std.debug.print("Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
         }
     }
 
@@ -440,8 +474,8 @@ test "asd" {
     while (rev_iter.next()) |dependency| {
         // const cell = cells.find(get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y) orelse continue;
         const entry = cells.reverse_dependencies.get(dependency.*).?;
-        for (entry.items) |item| {
-            std.debug.print("Reverse Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        for (entry.items) |_| {
+            // std.debug.print("Reverse Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
         }
     }
 
@@ -451,8 +485,8 @@ test "asd" {
 
     while (iter.next()) |dependency| {
         const entry = cells.dependencies.get(dependency.*).?;
-        for (entry.items) |item| {
-            std.debug.print("Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        for (entry.items) |_| {
+            // std.debug.print("Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
         }
     }
 
@@ -461,8 +495,8 @@ test "asd" {
     while (rev_iter.next()) |dependency| {
         // const cell = cells.find(get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y) orelse continue;
         const entry = cells.reverse_dependencies.get(dependency.*).?;
-        for (entry.items) |item| {
-            std.debug.print("Reverse Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
+        for (entry.items) |_| {
+            // std.debug.print("Reverse Dependency. From ({}, {}) to ({}, {})\n", .{ get_cell_pos(dependency.*).x, get_cell_pos(dependency.*).y, get_cell_pos(item).x, get_cell_pos(item).y });
         }
     }
 }
@@ -539,7 +573,6 @@ test "chars to column AB" {
 }
 
 test "find single reference" {
-    std.debug.print("\n\n", .{});
     const allocator = std.heap.c_allocator;
     var cells = try CellContainer.init(0, allocator);
 
@@ -548,18 +581,18 @@ test "find single reference" {
 
     _ = cell_0_0;
 
-    const refs = try cell_2_0.find_all_references();
+    const refs = try cell_2_0.find_references(cell_2_0.raw_value.items);
 
     try std.testing.expect(refs.len == 1);
-    const index, const len, const cell_id = refs[0];
+    const index, const len, const cell_pos = refs[0];
 
     try std.testing.expect(index == 1);
     try std.testing.expect(len == 2);
-    try std.testing.expect(cell_id == 0);
+    try std.testing.expect(cell_pos.x == 0);
+    try std.testing.expect(cell_pos.y == 0);
 }
 
 test "find multiple references" {
-    std.debug.print("\n\n", .{});
     const allocator = std.heap.c_allocator;
     var cells = try CellContainer.init(0, allocator);
 
@@ -570,29 +603,30 @@ test "find multiple references" {
     _ = cell_0_0;
     _ = cell_15_77;
 
-    const refs = try cell_2_0.find_all_references();
+    const refs = try cell_2_0.find_references(cell_2_0.raw_value.items);
 
     try std.testing.expect(refs.len == 2);
-    const index_1, const len_1, const cell_id_1 = refs[0];
-    const index_2, const len_2, const cell_id_2 = refs[1];
+    const index_1, const len_1, const cell_pos_1 = refs[0];
+    const index_2, const len_2, const cell_pos_2 = refs[1];
 
     try std.testing.expect(index_1 == 1);
     try std.testing.expect(len_1 == 2);
-    try std.testing.expect(cell_id_1 == 0);
+    try std.testing.expect(cell_pos_1.x == 0);
+    try std.testing.expect(cell_pos_1.y == 0);
 
     try std.testing.expect(index_2 == 6);
     try std.testing.expect(len_2 == 3);
-    try std.testing.expect(cell_id_2 == get_cell_id(15, 77));
+    try std.testing.expect(cell_pos_2.x == 15);
+    try std.testing.expect(cell_pos_2.y == 77);
 }
 
 test "find no reference" {
-    std.debug.print("\n\n", .{});
     const allocator = std.heap.c_allocator;
     var cells = try CellContainer.init(0, allocator);
 
     const cell_0_0 = try cells.add_cell(0, 0, "15");
 
-    const refs = try cell_0_0.find_all_references();
+    const refs = try cell_0_0.find_references(cell_0_0.raw_value.items);
 
     try std.testing.expect(refs.len == 0);
 }
@@ -605,11 +639,11 @@ test "replace single ref" {
     try cell_0_0.value.appendSlice(cell_0_0.raw_value.items);
     var cell_2_0 = try cells.add_cell(2, 0, "=A0*2");
 
-    const result, const refs = try cell_2_0.replace_stuff(&cells);
-    std.debug.print("{s}, {any}\n\n", .{ result, refs });
+    const result, const refs = try cell_2_0.replace_exprs(&cells);
     try std.testing.expectEqualStrings("=15*2", result);
     try std.testing.expect(refs.len == 1);
-    try std.testing.expect(refs[0] == 0);
+    try std.testing.expect(refs[0].x == 0);
+    try std.testing.expect(refs[0].y == 0);
 }
 
 test "replace two refs" {
@@ -624,12 +658,13 @@ test "replace two refs" {
 
     var cell_2_0 = try cells.add_cell(2, 0, "=A0*B0");
 
-    const result, const refs = try cell_2_0.replace_stuff(&cells);
-    std.debug.print("{s}, {any}\n\n", .{ result, refs });
+    const result, const refs = try cell_2_0.replace_exprs(&cells);
     try std.testing.expectEqualStrings("=15*30", result);
     try std.testing.expectEqual(refs.len, 2);
-    try std.testing.expectEqual(0, refs[0]);
-    try std.testing.expectEqual(10000, refs[1]);
+    try std.testing.expectEqual(0, refs[0].x);
+    try std.testing.expectEqual(0, refs[0].y);
+    try std.testing.expectEqual(1, refs[1].x);
+    try std.testing.expectEqual(0, refs[1].y);
 }
 
 test "replace three refs" {
@@ -647,13 +682,42 @@ test "replace three refs" {
 
     var cell_3_0 = try cells.add_cell(3, 0, "=A0*B0+C5*pow(C5,15)");
 
-    const result, const refs = try cell_3_0.replace_stuff(&cells);
-    std.debug.print("{s}, {any}\n\n", .{ result, refs });
+    const result, const refs = try cell_3_0.replace_exprs(&cells);
     try std.testing.expectEqualStrings("=15*30+40*pow(40,15)", result);
     try std.testing.expectEqual(4, refs.len);
-    try std.testing.expectEqual(0, refs[0]);
-    try std.testing.expectEqual(10000, refs[1]);
-    try std.testing.expectEqual(20005, refs[2]);
+    try std.testing.expectEqual(0, refs[0].x);
+    try std.testing.expectEqual(0, refs[0].y);
+    try std.testing.expectEqual(1, refs[1].x);
+    try std.testing.expectEqual(0, refs[1].y);
+    try std.testing.expectEqual(2, refs[2].x);
+    try std.testing.expectEqual(5, refs[2].y);
+}
+
+test "replace refs with range expression" {
+    const allocator = std.heap.c_allocator;
+    var cells = try CellContainer.init(0, allocator);
+
+    var cell_0_0 = try cells.add_cell(0, 0, "15");
+    try cell_0_0.value.appendSlice(cell_0_0.raw_value.items);
+
+    var cell_1_0 = try cells.add_cell(0, 1, "30");
+    try cell_1_0.value.appendSlice(cell_1_0.raw_value.items);
+
+    var cell_2_0 = try cells.add_cell(0, 2, "40");
+    try cell_2_0.value.appendSlice(cell_2_0.raw_value.items);
+
+    var cell_15_15 = try cells.add_cell(15, 15, "=SUM(A0:A2)");
+
+    const result, const refs = try cell_15_15.replace_exprs(&cells);
+    std.debug.print("{s}, {any}\n\n", .{ result, refs });
+    try std.testing.expectEqualStrings("=SUM(15,30,40)", result);
+    try std.testing.expectEqual(3, refs.len);
+    try std.testing.expectEqual(0, refs[0].x);
+    try std.testing.expectEqual(0, refs[0].y);
+    try std.testing.expectEqual(0, refs[1].x);
+    try std.testing.expectEqual(1, refs[1].y);
+    try std.testing.expectEqual(0, refs[2].x);
+    try std.testing.expectEqual(2, refs[2].y);
 }
 
 test "Depends directly on itself" {
@@ -761,3 +825,185 @@ test "Subgraph with invalid expr true" {
     const result = try cell_0_0.depends_on_itself(&cells);
     try std.testing.expectEqual(true, result);
 }
+
+test "unfold_raw_value_and_find_refs_v2" {
+    const allocator = std.heap.c_allocator;
+
+    // Initialize a Cell with a raw_value containing a range reference
+    var cell = try Cell.init(allocator, 0, 0, "=A1:A3,");
+    // defer cell.deinit();
+
+    // Call the function
+    var buff: [20]u8 = .{0} ** 20;
+    const result = cell.unfold_raw_value(&buff);
+    // Check the unfolded string
+    const expected_str = "=A1,A2,A3,";
+    try std.testing.expectEqualStrings(expected_str, result);
+}
+test "unfold_raw_value_and_find_refs_multiple_values" {
+    const allocator = std.heap.c_allocator;
+
+    // Initialize a Cell with a raw_value containing a range reference
+    var cell = try Cell.init(allocator, 0, 0, "=A1:A3, B1:B3");
+    // defer cell.deinit();
+
+    // Call the function
+    var buff: [30]u8 = .{0} ** 30;
+    const result = cell.unfold_raw_value(&buff);
+    // Check the unfolded string
+    const expected_str = "=A1,A2,A3, B1,B2,B3";
+    try std.testing.expectEqualStrings(expected_str, result);
+}
+
+test "unfold_raw_value_in_sum" {
+    const allocator = std.heap.c_allocator;
+
+    // Initialize a Cell with a raw_value containing a range reference
+    var cell = try Cell.init(allocator, 0, 0, "=SUM(A1:A3)");
+    // defer cell.deinit();
+
+    // Call the function
+    var buff: [20]u8 = .{0} ** 20;
+    const result = cell.unfold_raw_value(&buff);
+    // Check the unfolded string
+    const expected_str = "=SUM(A1,A2,A3)";
+    try std.testing.expectEqualStrings(expected_str, result);
+}
+
+fn isLetter(c: u8) bool {
+    return (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z');
+}
+fn isDigit(c: u8) bool {
+    return c >= '0' and c <= '9';
+}
+
+fn columnToNumber(col_str: []const u8) usize {
+    var result: usize = 0;
+    for (col_str) |c| {
+        const uppercase_c = if (c >= 'a' and c <= 'z') c - ('a' - 'A') else c;
+        result = result * 26 + @as(usize, @intCast(uppercase_c - 'A' + 1));
+    }
+    return result;
+}
+
+fn numberToColumn(num: usize, allocator: *std.mem.Allocator) ![]u8 {
+    var buf = std.ArrayList(u8).init(allocator);
+    defer buf.deinit();
+
+    while (num > 0) : (num /= 26) {
+        var rem = num % 26;
+        if (rem == 0) {
+            rem = 26;
+            num -= 26;
+        }
+        try buf.prepend(@as(u8, @intCast('A' + rem - 1)));
+    }
+
+    return buf.toOwnedSlice();
+}
+
+fn parse_cell_ref(input: []const u8, start_idx: usize) ?struct { len: usize, cell_pos: CellPos } {
+    var idx = start_idx;
+    const len = input.len;
+
+    const col_start = idx;
+    while (idx < len and input[idx] >= 'A' and input[idx] <= 'Z') {
+        idx += 1;
+    }
+    if (col_start == idx) {
+        // No letters found
+        return null;
+    }
+    const col_str = input[col_start..idx];
+
+    const row_start = idx;
+    while (idx < len and input[idx] >= '0' and input[idx] <= '9') {
+        idx += 1;
+    }
+    if (row_start == idx) {
+        // No digits found
+        return null;
+    }
+    const row_str = input[row_start..idx];
+
+    const col_num: i32 = chars_to_column(col_str) catch return null;
+    const row_num: i32 = std.fmt.parseInt(i32, row_str, 10) catch {
+        return null;
+    };
+    return .{ .len = idx - start_idx, .cell_pos = CellPos{ .x = col_num, .y = row_num } };
+}
+
+fn parse_range(input: []const u8, start_idx: usize) ?struct { len: usize, start_cell: CellPos, end_cell: CellPos } {
+    var idx = start_idx;
+    const start_cell = parse_cell_ref(input, idx) orelse return null;
+    idx = start_idx + start_cell.len;
+    if (idx >= input.len or input[idx] != ':') {
+        return null;
+    }
+    idx += 1;
+    const end_cell = parse_cell_ref(input, idx) orelse return null;
+    idx = idx + end_cell.len;
+    return .{ .len = idx - start_idx, .start_cell = start_cell.cell_pos, .end_cell = end_cell.cell_pos };
+}
+
+test "parse_range" {
+    const input = "A1:B2";
+    const result = parse_range(input, 0) orelse @panic("Failed to parse range");
+
+    try std.testing.expectEqual(5, result.len);
+    try std.testing.expectEqual(0, result.start_cell.x);
+    try std.testing.expectEqual(1, result.start_cell.y);
+    try std.testing.expectEqual(1, result.end_cell.x);
+    try std.testing.expectEqual(2, result.end_cell.y);
+}
+
+test "parse_cell_ref" {
+    const input = "A1";
+    const result = parse_cell_ref(input, 0) orelse @panic("Failed to parse cell ref");
+
+    try std.testing.expectEqual(2, result.len);
+    try std.testing.expectEqual(0, result.cell_pos.x);
+    try std.testing.expectEqual(1, result.cell_pos.y);
+}
+
+test "parse_range_with_other_characters" {
+    const input = ", A1:B2";
+    const first_result = parse_range(input, 0);
+    try std.testing.expectEqual(null, first_result);
+    const result = parse_range(input, 2) orelse @panic("Failed to parse cell ref");
+    try std.testing.expectEqual(5, result.len);
+    try std.testing.expectEqual(0, result.start_cell.x);
+    try std.testing.expectEqual(1, result.start_cell.y);
+    try std.testing.expectEqual(1, result.end_cell.x);
+    try std.testing.expectEqual(2, result.end_cell.y);
+}
+
+fn num_to_col_str(col_num: u32, col_str: []u8) ?[]u8 {
+    // col_str is the buffer to hold the column letters
+    // Returns the length of the string written to col_str
+    var num = col_num + 1;
+    var temp_buf: [10]u8 = undefined; // Max column letters we can have is 10 (arbitrary)
+    var temp_idx: usize = 0;
+    while (num > 0) {
+        num -= 1;
+        const rem: u8 = @intCast(num % 26);
+        temp_buf[temp_idx] = rem + 'A';
+        temp_idx += 1;
+        num = num / 26;
+    }
+    // Now, temp_buf[0..temp_idx] contains the letters in reverse order
+    // We need to reverse them into col_str
+    if (temp_idx > col_str.len) {
+        // Not enough space in col_str
+        return null;
+    }
+    for (0..temp_idx) |i| {
+        col_str[i] = temp_buf[temp_idx - i - 1];
+    }
+    return col_str[0..temp_idx];
+}
+
+const CellPos = struct {
+    x: i32,
+    y: i32,
+};
