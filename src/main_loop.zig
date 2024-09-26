@@ -33,6 +33,12 @@ pub const StandardEventPoller = struct {
     }
 };
 
+const SelectionMode = union(enum) {
+    Nothing: void,
+    SingleCell: sheet.CellCoords,
+    Area: sheet.Area,
+};
+
 pub const SpreadSheetApp = struct {
     cells: CellContainer,
     display: sheet_window.SheetWindow,
@@ -43,8 +49,7 @@ pub const SpreadSheetApp = struct {
     next_frame: i128 = 0,
     prev_frame_wheel_x: f64 = 0,
     prev_frame_wheel_y: f64 = 0,
-    selected_cell: ?sheet.CellCoords = null,
-    selected_area: ?sheet.Area = null,
+    selection_mode: SelectionMode,
 
     left_button_is_down: bool = false,
     is_holding_shift: bool = false,
@@ -106,6 +111,7 @@ pub const SpreadSheetApp = struct {
             .allocator = std.heap.c_allocator,
             .filepath = filepath,
             .print_frametimes = print_frametimes,
+            .selection_mode = SelectionMode.Nothing,
         };
     }
     pub fn sleep_until_next_frame(self: *SpreadSheetApp) void {
@@ -133,40 +139,46 @@ pub const SpreadSheetApp = struct {
 
         try self.display.draw_background();
         if (self.cell_was_updated) {
-            if (self.selected_cell) |cell| {
-                const start = std.time.microTimestamp();
-                var skip_cells = std.ArrayList(*Cell).init(self.allocator);
-                const count = sheet.refresh_cell_values_for_cell(&self.cells, cell, &skip_cells, true);
-                const end = std.time.microTimestamp();
-                if (self.print_frametimes) {
-                    std.debug.print("[Frame {}]Refreshing {} cells took {}us\n", .{ self.frame, count, end - start });
-                }
+            switch (self.selection_mode) {
+                SelectionMode.SingleCell => |cell_coords| {
+                    const start = std.time.microTimestamp();
+                    var skip_cells = std.ArrayList(*Cell).init(self.allocator);
+                    const count = sheet.refresh_cell_values_for_cell(&self.cells, cell_coords, &skip_cells, true);
+                    const end = std.time.microTimestamp();
+                    if (self.print_frametimes) {
+                        std.debug.print("[Frame {}]Refreshing {} cells took {}us\n", .{ self.frame, count, end - start });
+                    }
+                },
+                else => {},
             }
-            // sheet.refresh_all_cell_values(&cells);
         }
         if (self.update_selected_area) {
             self.update_selected_area = false;
             const start = std.time.microTimestamp();
-            if (self.selected_area) |area| {
-                const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
-                const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
-                const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
-                const max_y = if (area.h > 0) area.y + area.h else (area.y + 1);
 
-                for (@intCast(min_x)..@intCast(max_x)) |x| {
-                    for (@intCast(min_y)..@intCast(max_y)) |y| {
-                        const cell = self.cells.find(@intCast(x), @intCast(y)) orelse continue;
-                        try cell.refresh_value(&self.cells, true);
-                        // sheet.refresh_cell_values_for_cell(&cells, .{ .x = @intCast(x), .y = @intCast(y) });
+            switch (self.selection_mode) {
+                SelectionMode.Area => |area| {
+                    const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
+                    const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
+                    const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
+                    const max_y = if (area.h > 0) area.y + area.h else (area.y + 1);
+
+                    for (@intCast(min_x)..@intCast(max_x)) |x| {
+                        for (@intCast(min_y)..@intCast(max_y)) |y| {
+                            const cell = self.cells.find(@intCast(x), @intCast(y)) orelse continue;
+                            try cell.refresh_value(&self.cells, true);
+                            // sheet.refresh_cell_values_for_cell(&cells, .{ .x = @intCast(x), .y = @intCast(y) });
+                        }
                     }
-                }
-            }
-            if (self.selected_cell) |cell_coords| {
-                const cell = self.cells.ensure_cell(@intCast(cell_coords.x), @intCast(cell_coords.y)) catch |err| {
-                    std.debug.print("Failed when ensuring cell.", .{});
-                    return err;
-                };
-                try cell.refresh_value(&self.cells, true);
+                },
+                SelectionMode.SingleCell => |cell_coords| {
+                    const cell = self.cells.ensure_cell(@intCast(cell_coords.x), @intCast(cell_coords.y)) catch |err| {
+                        std.debug.print("Failed when ensuring cell.", .{});
+                        return err;
+                    };
+                    try cell.refresh_value(&self.cells, true);
+                },
+                else => {},
             }
 
             const end = std.time.microTimestamp();
@@ -176,18 +188,21 @@ pub const SpreadSheetApp = struct {
             }
         }
         const start = std.time.microTimestamp();
-        try sheet.render_cells(&self.state, &self.display, &self.cells, self.selected_cell, self.is_editing);
+        const selected_cell = if (self.selection_mode == SelectionMode.SingleCell) self.selection_mode.SingleCell else null;
+        try sheet.render_cells(&self.state, &self.display, &self.cells, selected_cell, self.is_editing);
         const end = std.time.microTimestamp();
         if (self.print_frametimes) {
             std.debug.print("[Frame {}]Rendering cells took {}us\n", .{ self.frame, end - start });
         }
-        if (self.selected_area) |area| {
-            try sheet.render_selections(&self.state, &self.display, area);
+
+        const selected_area = if (self.selection_mode == SelectionMode.Area) self.selection_mode.Area else null;
+        if (selected_area != null) {
+            try sheet.render_selections(&self.state, &self.display, self.selection_mode.Area);
         }
         // const before_labels = std.time.microTimestamp();
 
-        try sheet.render_row_labels(&self.state, &self.display, self.selected_area, self.selected_cell);
-        try sheet.render_column_labels(&self.state, &self.display, self.selected_area, self.selected_cell);
+        try sheet.render_row_labels(&self.state, &self.display, selected_area, selected_cell);
+        try sheet.render_column_labels(&self.state, &self.display, selected_area, selected_cell);
 
         try self.display.render_present();
     }
@@ -238,20 +253,22 @@ pub const SpreadSheetApp = struct {
 
                         if (maybe_cell) |cell| {
                             if (self.is_holding_shift) {
-                                const coords = if (self.selected_cell) |cell_coords| .{ .x = cell_coords.x, .y = cell_coords.y } else if (self.selected_area) |area| .{ .x = area.x, .y = area.y } else continue;
+                                const coords = switch (self.selection_mode) {
+                                    .SingleCell => |cell_coords| .{ .x = cell_coords.x, .y = cell_coords.y },
+                                    .Area => |area| .{ .x = area.x, .y = area.y },
+                                    else => continue,
+                                };
                                 var w = cell.x - coords.x;
                                 var h = cell.y - coords.y;
                                 w += if (w > 0) 1 else -1;
                                 h += if (h > 0) 1 else -1;
-                                self.selected_area = .{ .x = coords.x, .y = coords.y, .w = w, .h = h };
-                                self.selected_cell = null;
+                                self.selection_mode = .{ .Area = .{ .x = coords.x, .y = coords.y, .w = w, .h = h } };
                             } else {
                                 _ = self.cells.ensure_cell(cell.x, cell.y) catch {
                                     std.debug.print("Failed when ensuring cell", .{});
                                     continue;
                                 };
-                                self.selected_cell = .{ .x = cell.x, .y = cell.y };
-                                self.selected_area = null;
+                                self.selection_mode = .{ .SingleCell = .{ .x = cell.x, .y = cell.y } };
                             }
                             // self.selected_cell = .{ .x = cell.x, .y = cell.y };
                         }
@@ -260,12 +277,17 @@ pub const SpreadSheetApp = struct {
                 sheet_window.c.SDL_MOUSEBUTTONUP => {
                     if (event.button.button == sheet_window.c.SDL_BUTTON_LEFT) {
                         self.left_button_is_down = false;
-                        if (self.selected_area) |area| {
-                            if (area.w == 1 and area.h == 1) {
-                                self.selected_cell = .{ .x = area.x, .y = area.y };
-                                _ = try self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y);
-                                self.selected_area = null;
-                            }
+                        switch (self.selection_mode) {
+                            SelectionMode.Area => |area| {
+                                if (area.w == 1 and area.h == 1) {
+                                    self.selection_mode = .{ .SingleCell = .{
+                                        .x = area.x,
+                                        .y = area.y,
+                                    } };
+                                    _ = try self.cells.ensure_cell(area.x, area.y);
+                                }
+                            },
+                            else => {},
                         }
                     }
                 },
@@ -273,59 +295,66 @@ pub const SpreadSheetApp = struct {
                     if (self.left_button_is_down) {
                         const maybe_cell = sheet.pixel_to_cell(event.button.x, event.button.y, &self.state);
                         if (maybe_cell) |mouse_cell| {
-                            if (self.selected_area) |*area| {
-                                if (area.x <= mouse_cell.x) {
-                                    area.w = mouse_cell.x - area.x + 1;
-                                } else {
-                                    area.w = mouse_cell.x - area.x - 1;
-                                }
-                                if (area.y <= mouse_cell.y) {
-                                    area.h = mouse_cell.y - area.y + 1;
-                                } else {
-                                    area.h = mouse_cell.y - area.y - 1;
-                                }
-                                if (area.w == 1 and area.h == 1) {
-                                    self.selected_cell = .{ .x = area.x, .y = area.y };
-                                    self.selected_area = null;
-                                }
-                            } else if (self.selected_cell) |cell| {
-                                var w = mouse_cell.x - cell.x;
-                                var h = mouse_cell.y - cell.y;
+                            switch (self.selection_mode) {
+                                SelectionMode.SingleCell => |cell| {
+                                    var w = mouse_cell.x - cell.x;
+                                    var h = mouse_cell.y - cell.y;
 
-                                if (w == 0 and h == 0) continue;
-                                w += if (w > 0) 1 else -1;
-                                h += if (h > 0) 1 else -1;
-                                self.selected_area = .{ .x = cell.x, .y = cell.y, .w = w, .h = h };
-                                self.selected_cell = null;
+                                    if (w == 0 and h == 0) continue;
+                                    w += if (w > 0) 1 else -1;
+                                    h += if (h > 0) 1 else -1;
+                                    self.selection_mode = .{ .Area = .{ .x = cell.x, .y = cell.y, .w = w, .h = h } };
+                                },
+                                SelectionMode.Area => |*area| {
+                                    if (area.x <= mouse_cell.x) {
+                                        area.w = mouse_cell.x - area.x + 1;
+                                    } else {
+                                        area.w = mouse_cell.x - area.x - 1;
+                                    }
+                                    if (area.y <= mouse_cell.y) {
+                                        area.h = mouse_cell.y - area.y + 1;
+                                    } else {
+                                        area.h = mouse_cell.y - area.y - 1;
+                                    }
+                                    if (area.w == 1 and area.h == 1) {
+                                        self.selection_mode = .{ .SingleCell = .{ .x = area.x, .y = area.y } };
+                                    }
+                                },
+                                else => {},
                             }
                         }
                     }
                 },
                 sheet_window.c.SDL_TEXTINPUT => {
-                    self.cell_was_updated = true; // we flip the bool here to ensure that we always update
-                    if (!self.is_editing) {
-                        self.is_editing = true;
-                        if (self.selected_cell) |cell_coords| {
-                            if (self.cells.find(cell_coords.x, cell_coords.y)) |cell| {
-                                cell.raw_value.items.len = 0;
+                    self.cell_was_updated = true; // we flip the bool here to ensure that we always update the cell when we get text input.
+                    const selected_cell_coords: sheet.CellCoords = switch (self.selection_mode) {
+                        SelectionMode.SingleCell => |cell_coords| blk: {
+                            if (!self.is_editing) {
+                                self.is_editing = true;
+                                if (self.cells.find(cell_coords.x, cell_coords.y)) |cell| {
+                                    cell.raw_value.items.len = 0;
+                                }
                             }
-                        }
-                    }
+                            break :blk cell_coords;
+                        },
+                        SelectionMode.Area => |area| blk: {
+                            self.is_editing = true;
+                            self.selection_mode = .{ .SingleCell = .{ .x = area.x, .y = area.y } };
+                            break :blk .{ .x = area.x, .y = area.y };
+                        },
+                        else => continue,
+                    };
+                    const selected_cell = self.cells.ensure_cell(selected_cell_coords.x, selected_cell_coords.y) catch {
+                        std.debug.print("Failed when ensuring cell exists", .{});
+                        continue;
+                    };
                     const text_len = get_cstr_len(&event.text.text);
                     var text: []u8 = undefined;
                     text.ptr = &event.text.text;
                     text.len = text_len;
-                    if (self.selected_area) |area| {
-                        self.selected_cell = .{ .x = area.x, .y = area.y };
-                        self.selected_area = null;
-                    }
-                    if (self.selected_cell == null) continue;
-                    const matching_cell = self.cells.find(self.selected_cell.?.x, self.selected_cell.?.y) orelse blk: {
-                        const new_cell = try self.cells.add_cell(self.selected_cell.?.x, self.selected_cell.?.y, "");
-                        break :blk new_cell;
-                    };
+
                     for (text) |char| {
-                        matching_cell.value_append(char) catch {
+                        selected_cell.value_append(char) catch {
                             std.debug.print("Could not append char '{}'", .{char});
                         };
                     }
@@ -334,172 +363,91 @@ pub const SpreadSheetApp = struct {
                     const keycode = event.key.keysym.sym;
 
                     if (keycode == sheet_window.c.SDLK_ESCAPE) {
-                        if (self.selected_area) |area| {
-                            self.selected_cell = .{ .x = area.x, .y = area.y };
-                            self.selected_area = null;
-                            self.is_editing = false;
-                        } else if (!self.is_editing) {
-                            self.selected_cell = null;
-                        } else if (self.is_editing) {
-                            self.is_editing = false;
+                        switch (self.selection_mode) {
+                            SelectionMode.SingleCell => {
+                                if (!self.is_editing) {
+                                    self.selection_mode = .Nothing;
+                                } else if (self.is_editing) {
+                                    self.is_editing = false;
+                                }
+                            },
+                            SelectionMode.Area => |area| {
+                                self.selection_mode = .{ .SingleCell = .{ .x = area.x, .y = area.y } };
+
+                                self.is_editing = false;
+                            },
+                            else => continue,
                         }
                     } else if (keycode == sheet_window.c.SDLK_RETURN) {
-                        if (self.selected_area) |area| {
-                            self.selected_cell = .{ .x = area.x, .y = area.y };
-                            self.selected_area = null;
-                        }
-                        if (!self.is_editing) {
-                            self.is_editing = true;
-                        } else if (self.is_editing) {
-                            if (self.selected_cell) |*cell| {
-                                cell.y += 1;
-                                _ = self.cells.ensure_cell(cell.x, cell.y) catch {
-                                    std.debug.print("Failed when ensuring cell exists", .{});
-                                    continue;
-                                };
-                            }
+                        switch (self.selection_mode) {
+                            .SingleCell => |*cell_coords| {
+                                if (!self.is_editing) {
+                                    self.is_editing = true;
+                                } else {
+                                    cell_coords.y += 1;
+                                    _ = self.cells.ensure_cell(cell_coords.x, cell_coords.y) catch {
+                                        std.debug.print("Failed when ensuring cell exists", .{});
+                                        cell_coords.y -= 1; // undo the change
+                                        continue;
+                                    };
+                                }
+                            },
+                            .Area => |area| {
+                                self.selection_mode = .{ .SingleCell = .{ .x = area.x + (if (area.w > 0) area.w - 1 else area.w + 1), .y = area.y + if (area.h > 0) area.h - 1 else area.h + 1 } };
+                                self.is_editing = true;
+                            },
+                            else => continue,
                         }
                     } else if (keycode == sheet_window.c.SDLK_LSHIFT) {
                         self.is_holding_shift = true;
                     } else if (keycode == sheet_window.c.SDLK_BACKSPACE) {
                         self.cell_was_updated = true;
-                        if (self.selected_cell) |cell_coords| {
-                            if (self.cells.find(cell_coords.x, cell_coords.y)) |cell| {
-                                if (self.is_editing) cell.value_delete() else cell.raw_value.items.len = 0;
-                            }
-                        } else if (self.selected_area) |area| {
-                            self.update_selected_area = true;
-                            const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
-                            const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
-                            const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
-                            const max_y = if (area.h > 0) area.y + area.h else (area.y + 1);
-                            for (@intCast(min_y)..@intCast(max_y)) |y| {
-                                for (@intCast(min_x)..@intCast(max_x)) |x| {
-                                    if (self.cells.find(@intCast(x), @intCast(y))) |cell| {
-                                        cell.raw_value.items.len = 0;
+                        switch (self.selection_mode) {
+                            .SingleCell => |cell_coords| {
+                                if (self.cells.find(cell_coords.x, cell_coords.y)) |cell| {
+                                    if (self.is_editing) cell.value_delete() else cell.raw_value.items.len = 0;
+                                }
+                            },
+                            .Area => |area| {
+                                self.update_selected_area = true;
+                                const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
+                                const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
+                                const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
+                                const max_y = if (area.h > 0) area.y + area.h else (area.y + 1);
+                                for (@intCast(min_y)..@intCast(max_y)) |y| {
+                                    for (@intCast(min_x)..@intCast(max_x)) |x| {
+                                        if (self.cells.find(@intCast(x), @intCast(y))) |cell| {
+                                            cell.raw_value.items.len = 0;
+                                        }
                                     }
                                 }
-                            }
+                            },
+                            else => continue,
                         }
                     } else if (keycode == sheet_window.c.SDLK_TAB) {
-                        if (self.selected_cell) |*cell_coords| {
-                            cell_coords.x += 1;
-                            _ = self.cells.ensure_cell(cell_coords.x, cell_coords.y) catch {
-                                std.debug.print("Failed when ensuring cell exists. ", .{});
-                            };
-                        } else if (self.selected_area) |*area| {
-                            self.selected_cell = .{ .x = area.x + 1, .y = area.y };
-                            self.selected_area = null;
-                            _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
-                                std.debug.print("Failed when ensuring cell exists. ", .{});
-                            };
+                        switch (self.selection_mode) {
+                            .SingleCell => |*cell_coords| {
+                                cell_coords.x += 1;
+                                _ = self.cells.ensure_cell(cell_coords.x, cell_coords.y) catch {
+                                    std.debug.print("Failed when ensuring cell exists. ", .{});
+                                };
+                            },
+                            .Area => |area| {
+                                self.selection_mode = .{ .SingleCell = .{ .x = area.x + 1, .y = area.y } };
+                                _ = self.cells.ensure_cell(self.selection_mode.SingleCell.x, self.selection_mode.SingleCell.y) catch {
+                                    std.debug.print("Failed when ensuring cell exists. ", .{});
+                                };
+                            },
+                            else => continue,
                         }
                     }
                     const scancode = event.key.keysym.scancode;
-                    if (scancode == sheet_window.c.SDL_SCANCODE_LEFT) {
-                        if (self.left_button_is_down) continue;
-                        if (self.is_holding_shift) {
-                            if (self.selected_cell) |cell| {
-                                if (cell.x == 0) {
-                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = 1 };
-                                } else {
-                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = -2, .h = 1 };
-                                }
-                                self.selected_cell = null;
-                            } else if (self.selected_area) |*area| {
-                                if (area.x == 0 and area.w == 1) continue; // special case where the user started selection at x=0
-                                if (area.x + area.w == -1) continue;
-                                if (area.w == 1) area.w = -2 else area.w -= 1;
-                            }
-                        } else {
-                            if (self.selected_cell) |*cell| {
-                                self.is_editing = false;
-                                cell.x = @max(0, cell.x - 1);
-                                _ = try self.cells.ensure_cell(cell.x, cell.y);
-                            } else if (self.selected_area) |*area| {
-                                self.selected_cell = .{ .x = @max(area.x - 1, 0), .y = area.y };
-                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
-                                    std.debug.print("Failed when ensuring cell.", .{});
-                                    continue;
-                                };
-                                self.selected_area = null;
-                            }
-                        }
-                    } else if (scancode == sheet_window.c.SDL_SCANCODE_RIGHT) {
-                        if (self.left_button_is_down) continue;
-                        if (self.is_holding_shift) {
-                            if (self.selected_cell) |cell| {
-                                self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 2, .h = 1 };
-                                self.selected_cell = null;
-                            } else if (self.selected_area) |*area| {
-                                if (area.w == -1) area.w = 2 else area.w += 1;
-                            }
-                        } else {
-                            if (self.selected_cell) |*cell| {
-                                self.is_editing = false;
-                                cell.x = cell.x + 1;
-                                _ = try self.cells.ensure_cell(cell.x, cell.y);
-                            } else if (self.selected_area) |*area| {
-                                self.selected_cell = .{ .x = area.x + 1, .y = area.y };
-                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
-                                    std.debug.print("Failed when ensuring cell.", .{});
-                                    continue;
-                                };
-                                self.selected_area = null;
-                            }
-                        }
-                    } else if (scancode == sheet_window.c.SDL_SCANCODE_DOWN) {
-                        if (self.left_button_is_down) continue;
-                        if (self.is_holding_shift) {
-                            if (self.selected_cell) |cell| {
-                                self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = 2 };
-                                self.selected_cell = null;
-                            } else if (self.selected_area) |*area| {
-                                if (area.h == -1) area.h = 2 else area.h += 1;
-                            }
-                        } else {
-                            if (self.selected_cell) |*cell| {
-                                self.is_editing = false;
-                                cell.y = cell.y + 1;
-                                _ = try self.cells.ensure_cell(cell.x, cell.y);
-                            } else if (self.selected_area) |*area| {
-                                self.selected_cell = .{ .x = area.x, .y = area.y + 1 };
-                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
-                                    std.debug.print("Failed when ensuring cell.", .{});
-                                    continue;
-                                };
-                                self.selected_area = null;
-                            }
-                        }
-                    } else if (scancode == sheet_window.c.SDL_SCANCODE_UP) {
-                        if (self.left_button_is_down) continue;
-                        if (self.is_holding_shift) {
-                            if (self.selected_cell) |cell| {
-                                if (cell.y == 0) { // special case where the user starts selection at y=0
-                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = 1 };
-                                } else {
-                                    self.selected_area = .{ .x = cell.x, .y = cell.y, .w = 1, .h = -2 };
-                                }
-                                self.selected_cell = null;
-                            } else if (self.selected_area) |*area| {
-                                if (area.y == 0 and area.h == 1) continue; // special case where the user started selection at y=0
-                                if (area.y + area.h == -1) continue;
-                                if (area.h == 1) area.h = -2 else area.h -= 1;
-                            }
-                        } else {
-                            if (self.selected_cell) |*cell| {
-                                self.is_editing = false;
-                                cell.y = @max(0, cell.y - 1);
-                                _ = try self.cells.ensure_cell(cell.x, cell.y);
-                            } else if (self.selected_area) |*area| {
-                                self.selected_cell = .{ .x = area.x, .y = @max(area.y - 1, 0) };
-                                _ = self.cells.ensure_cell(self.selected_cell.?.x, self.selected_cell.?.y) catch {
-                                    std.debug.print("Failed when ensuring cell.", .{});
-                                    continue;
-                                };
-                                self.selected_area = null;
-                            }
-                        }
+                    if (scancode == sheet_window.c.SDL_SCANCODE_LEFT or
+                        scancode == sheet_window.c.SDL_SCANCODE_RIGHT or
+                        scancode == sheet_window.c.SDL_SCANCODE_UP or
+                        scancode == sheet_window.c.SDL_SCANCODE_DOWN)
+                    {
+                        self.handle_arrow_press(scancode);
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_S) {
                         if (self.is_holding_cmd) {
                             const start_save = std.time.microTimestamp();
@@ -513,127 +461,9 @@ pub const SpreadSheetApp = struct {
                             std.debug.print("Succesfully saved to file {s} in {d:.2}ms\n", .{ self.filepath, in_milliseconds });
                         }
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_C) {
-                        if (!self.is_holding_cmd) continue;
-                        if (self.selected_cell) |cell_coords| {
-                            if (self.cells.find(cell_coords.x, cell_coords.y)) |cell| {
-                                const cell_value = cell.raw_value.items;
-                                const c_str = try self.allocator.dupeZ(u8, cell_value);
-                                defer self.allocator.free(c_str);
-                                if (sheet_window.c.SDL_SetClipboardText(c_str) != 0) {
-                                    std.debug.print("Could not paste text to clipboard.", .{});
-                                }
-                            }
-                        } else if (self.selected_area) |area| blk: {
-                            var clipboard_buffer = std.ArrayList(u8).init(self.allocator);
-                            defer clipboard_buffer.deinit();
-
-                            const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
-                            const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
-                            const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
-                            const max_y = if (area.h > 0) area.y + area.h else (area.y + 1);
-                            for (@intCast(min_y)..@intCast(max_y)) |y| {
-                                for (@intCast(min_x)..@intCast(max_x)) |x| {
-                                    if (self.cells.find(@intCast(x), @intCast(y))) |cell| {
-                                        clipboard_buffer.appendSlice(cell.raw_value.items) catch {
-                                            std.debug.print("Could not allocate for clipboard buffer.", .{});
-                                            break :blk;
-                                        };
-                                    }
-                                    // this skips the last item in a row, so that we avoid have \t\n at the end.
-                                    if (x < max_x - 1) {
-                                        clipboard_buffer.append('\t') catch {
-                                            std.debug.print("Could not allocate for clipboard buffer.", .{});
-                                            break :blk;
-                                        };
-                                    }
-                                }
-                                if (y < max_y - 1) {
-                                    clipboard_buffer.append('\n') catch {
-                                        std.debug.print("Could not allocate for clipboard buffer.", .{});
-                                        break :blk;
-                                    };
-                                }
-                            }
-                            clipboard_buffer.append(0) catch {
-                                std.debug.print("Could not allocate for clipboard buffer.", .{});
-                                break :blk;
-                            };
-                            if (sheet_window.c.SDL_SetClipboardText(clipboard_buffer.items.ptr) != 0) {
-                                std.debug.print("Could not set the clipboard to value '{any}", .{clipboard_buffer.items});
-                                break :blk;
-                            }
-                        }
-                    } else if (scancode == sheet_window.c.SDL_SCANCODE_V) blk: {
-                        if (self.is_holding_cmd) {
-                            self.update_selected_area = true;
-
-                            const maybe_cell_coords = block: {
-                                if (self.selected_cell) |cell| break :block cell;
-                                if (self.selected_area) |area| {
-                                    break :block sheet.CellCoords{ .x = area.x, .y = area.y };
-                                }
-                                break :block null;
-                            };
-                            if (maybe_cell_coords) |cell_coords| {
-                                const clipboard = sheet_window.c.SDL_GetClipboardText();
-                                defer sheet_window.c.SDL_free(clipboard);
-
-                                var c_str_slice: []u8 = undefined;
-                                c_str_slice.ptr = clipboard;
-                                c_str_slice.len = get_cstr_len(clipboard);
-                                var curr_cell_coords: sheet.CellCoords = .{ .x = cell_coords.x, .y = cell_coords.y };
-                                var curr_cell: *Cell = self.cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
-                                    std.debug.print("Failed when ensure that cell existed.", .{});
-                                    break :blk;
-                                };
-                                curr_cell.raw_value.items.len = 0;
-                                var curr_width: i32 = 0;
-                                var max_width: i32 = 1;
-                                var height: i32 = 0;
-                                if (c_str_slice[c_str_slice.len - 1] == '\n') c_str_slice.len -= 1;
-                                for (0..c_str_slice.len + 1) |ind| {
-                                    const char = if (ind < c_str_slice.len) c_str_slice[ind] else 0;
-                                    if (char == '\t') {
-                                        curr_width += 1;
-                                        curr_cell_coords.x += 1;
-                                        curr_cell = self.cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
-                                            std.debug.print("Failed when ensure that cell existed.", .{});
-                                            break :blk;
-                                        };
-                                        curr_cell.raw_value.items.len = 0;
-                                    } else if (char == '\n' or char == 0) {
-                                        curr_width += 1;
-                                        max_width = @max(max_width, curr_width);
-                                        curr_width = 0;
-                                        height += 1;
-                                        curr_cell_coords.y += 1;
-                                        curr_cell_coords.x = cell_coords.x;
-                                        curr_cell = self.cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
-                                            std.debug.print("Failed when ensure that cell existed.", .{});
-                                            break :blk;
-                                        };
-                                        if (char != 0) {
-                                            curr_cell.raw_value.items.len = 0;
-                                        }
-                                    } else {
-                                        curr_cell.raw_value.append(char) catch {
-                                            std.debug.print("Failed when appending cell value.", .{});
-                                            break :blk;
-                                        };
-                                    }
-                                }
-
-                                // the pasted value might not end with a newline:
-                                max_width = @max(curr_width, max_width);
-                                if (max_width == 1 and height == 1) {
-                                    self.selected_cell = .{ .x = cell_coords.x, .y = cell_coords.y };
-                                    self.selected_area = null;
-                                } else {
-                                    self.selected_area = .{ .x = cell_coords.x, .y = cell_coords.y, .w = max_width, .h = height };
-                                    self.selected_cell = null;
-                                }
-                            }
-                        }
+                        if (self.is_holding_cmd) self.handle_copy();
+                    } else if (scancode == sheet_window.c.SDL_SCANCODE_V) {
+                        if (self.is_holding_cmd) self.handle_paste();
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_LGUI) {
                         self.is_holding_cmd = true;
                     }
@@ -665,5 +495,196 @@ pub const SpreadSheetApp = struct {
             }
         }
         return false;
+    }
+
+    fn handle_arrow_press(self: *SpreadSheetApp, scancode: c_uint) void {
+        var move_x: i32 = 0;
+        var move_y: i32 = 0;
+
+        switch (scancode) {
+            sheet_window.c.SDL_SCANCODE_LEFT => {
+                move_x = -1;
+                move_y = 0;
+            },
+            sheet_window.c.SDL_SCANCODE_RIGHT => {
+                move_x = 1;
+                move_y = 0;
+            },
+            sheet_window.c.SDL_SCANCODE_DOWN => {
+                move_x = 0;
+                move_y = 1;
+            },
+            sheet_window.c.SDL_SCANCODE_UP => {
+                move_x = 0;
+                move_y = -1;
+            },
+            else => return,
+        }
+
+        switch (self.selection_mode) {
+            SelectionMode.Nothing => return,
+            SelectionMode.SingleCell => |*cell_coords| {
+                self.is_editing = false;
+                if (self.is_holding_shift) {
+                    self.selection_mode = .{ .Area = .{ .x = cell_coords.x, .y = cell_coords.y, .w = if (move_x == 0) 1 else 2 * move_x, .h = if (move_y == 0) 1 else 2 * move_y } };
+                } else {
+                    cell_coords.x = @max(0, cell_coords.x + move_x);
+                    cell_coords.y = @max(0, cell_coords.y + move_y);
+                    _ = self.cells.ensure_cell(cell_coords.x, cell_coords.y) catch {
+                        std.debug.print("Failed when ensuring cell.", .{});
+                        return;
+                    };
+                }
+            },
+            SelectionMode.Area => |*area| {
+                if (self.is_holding_shift) {
+                    area.w += move_x;
+                    area.h += move_y;
+                    if (area.x + area.w < -1) {
+                        area.w = -area.x - 1;
+                    }
+
+                    if (area.w == 0) {
+                        area.w += 2 * move_x;
+                    }
+                    if (area.h == 0) {
+                        area.h += 2 * move_y;
+                    }
+                    if (area.y + area.h < -1) {
+                        area.h = -area.y - 1;
+                    }
+                } else {
+                    self.selection_mode = .{ .SingleCell = .{ .x = move_x + area.x + (if (area.w > 0) area.w - 1 else area.w + 1), .y = move_y + area.y + if (area.h > 0) area.h - 1 else area.h + 1 } };
+                    _ = self.cells.ensure_cell(self.selection_mode.SingleCell.x, self.selection_mode.SingleCell.y) catch {
+                        std.debug.print("Failed when ensuring cell.", .{});
+                        return;
+                    };
+                }
+            },
+        }
+    }
+
+    fn handle_copy(self: *SpreadSheetApp) void {
+        switch (self.selection_mode) {
+            .SingleCell => |cell_coords| {
+                if (self.cells.find(cell_coords.x, cell_coords.y)) |cell| {
+                    const cell_value = cell.raw_value.items;
+                    const c_str = self.allocator.dupeZ(u8, cell_value) catch {
+                        std.debug.print("Could not allocate for clipboard buffer.", .{});
+                        return;
+                    };
+                    defer self.allocator.free(c_str);
+                    if (sheet_window.c.SDL_SetClipboardText(c_str) != 0) {
+                        std.debug.print("Could not paste text to clipboard.", .{});
+                    }
+                }
+            },
+            .Area => |area| {
+                var clipboard_buffer = std.ArrayList(u8).init(self.allocator);
+                defer clipboard_buffer.deinit();
+
+                const min_x = if (area.w > 0) area.x else (area.x + area.w + 1);
+                const min_y = if (area.h > 0) area.y else (area.y + area.h + 1);
+                const max_x = if (area.w > 0) area.x + area.w else (area.x + 1);
+                const max_y = if (area.h > 0) area.y + area.h else (area.y + 1);
+                for (@intCast(min_y)..@intCast(max_y)) |y| {
+                    for (@intCast(min_x)..@intCast(max_x)) |x| {
+                        if (self.cells.find(@intCast(x), @intCast(y))) |cell| {
+                            clipboard_buffer.appendSlice(cell.raw_value.items) catch {
+                                std.debug.print("Could not allocate for clipboard buffer.", .{});
+                                return;
+                            };
+                        }
+                        // this skips the last item in a row, so that we avoid have \t\n at the end.
+                        if (x < max_x - 1) {
+                            clipboard_buffer.append('\t') catch {
+                                std.debug.print("Could not allocate for clipboard buffer.", .{});
+                                return;
+                            };
+                        }
+                    }
+                    if (y < max_y - 1) {
+                        clipboard_buffer.append('\n') catch {
+                            std.debug.print("Could not allocate for clipboard buffer.", .{});
+                            return;
+                        };
+                    }
+                }
+                clipboard_buffer.append(0) catch {
+                    std.debug.print("Could not allocate for clipboard buffer.", .{});
+                    return;
+                };
+                if (sheet_window.c.SDL_SetClipboardText(clipboard_buffer.items.ptr) != 0) {
+                    std.debug.print("Could not set the clipboard to value '{any}", .{clipboard_buffer.items});
+                    return;
+                }
+            },
+            else => return,
+        }
+    }
+
+    fn handle_paste(self: *SpreadSheetApp) void {
+        self.update_selected_area = true;
+        const cell_coords: sheet.CellCoords = switch (self.selection_mode) {
+            .SingleCell => |cell_coords| cell_coords,
+            .Area => |area| .{ .x = area.x, .y = area.y },
+            else => return,
+        };
+
+        const clipboard = sheet_window.c.SDL_GetClipboardText();
+        defer sheet_window.c.SDL_free(clipboard);
+
+        var c_str_slice: []u8 = undefined;
+        c_str_slice.ptr = clipboard;
+        c_str_slice.len = get_cstr_len(clipboard);
+        var curr_cell_coords: sheet.CellCoords = .{ .x = cell_coords.x, .y = cell_coords.y };
+        var curr_cell: *Cell = self.cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
+            std.debug.print("Failed when ensure that cell existed.", .{});
+            return;
+        };
+        curr_cell.raw_value.items.len = 0;
+        var curr_width: i32 = 0;
+        var max_width: i32 = 1;
+        var height: i32 = 0;
+        if (c_str_slice[c_str_slice.len - 1] == '\n') c_str_slice.len -= 1;
+        for (0..c_str_slice.len + 1) |ind| {
+            const char = if (ind < c_str_slice.len) c_str_slice[ind] else 0;
+            if (char == '\t') {
+                curr_width += 1;
+                curr_cell_coords.x += 1;
+                curr_cell = self.cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
+                    std.debug.print("Failed when ensure that cell existed.", .{});
+                    return;
+                };
+                curr_cell.raw_value.items.len = 0;
+            } else if (char == '\n' or char == 0) {
+                curr_width += 1;
+                max_width = @max(max_width, curr_width);
+                curr_width = 0;
+                height += 1;
+                curr_cell_coords.y += 1;
+                curr_cell_coords.x = cell_coords.x;
+                curr_cell = self.cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
+                    std.debug.print("Failed when ensure that cell existed.", .{});
+                    return;
+                };
+                if (char != 0) {
+                    curr_cell.raw_value.items.len = 0;
+                }
+            } else {
+                curr_cell.raw_value.append(char) catch {
+                    std.debug.print("Failed when appending cell value.", .{});
+                    return;
+                };
+            }
+        }
+
+        // the pasted value might not end with a newline:
+        max_width = @max(curr_width, max_width);
+        if (max_width == 1 and height == 1) {
+            self.selection_mode = .{ .SingleCell = .{ .x = cell_coords.x, .y = cell_coords.y } };
+        } else {
+            self.selection_mode = .{ .Area = .{ .x = cell_coords.x, .y = cell_coords.y, .w = max_width, .h = height } };
+        }
     }
 };

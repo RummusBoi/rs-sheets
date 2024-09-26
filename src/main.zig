@@ -52,7 +52,7 @@ fn return_true(_: *SpreadSheetApp) bool {
 }
 
 pub fn main() !void {
-    const do_e2e_test = false;
+    const do_e2e_test = true;
     if (do_e2e_test) {
         try run_e2e();
     } else {
