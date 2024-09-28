@@ -238,6 +238,7 @@ pub const Cell = struct {
             }
             const null_terminated_expr = try self.allocator.dupeZ(u8, replaced_expr[1..]);
             defer self.allocator.free(null_terminated_expr);
+
             const result = tinyexpr.te_interp(null_terminated_expr, 0);
 
             var res_buffer: [64]u8 = .{0} ** 64;
@@ -1093,27 +1094,31 @@ fn unfold_function(function: CellFunction, args: []const u8, result: []u8) ![]u8
             return result[0..result_len];
         },
         CellFunction.Min => {
-            var min_so_far: ?f32 = null;
+            var min_so_far: ?f64 = null;
             var spliterator = std.mem.split(u8, unfolded_args, ",");
             while (spliterator.next()) |arg| {
-                const arg_i32 = std.fmt.parseFloat(f32, arg) catch {
-                    return std.fmt.bufPrint(result, "Error parsing argument {s}", .{arg}) catch @panic("Buffer overflow");
-                };
+                var inner_buf: [1024]u8 = undefined;
+                std.mem.copyForwards(u8, &inner_buf, arg);
+                inner_buf[arg.len] = 0; // ensure null-termination.
 
-                min_so_far = if (min_so_far != null) @min(min_so_far.?, arg_i32) else arg_i32;
+                const res = tinyexpr.te_interp(&inner_buf, 0);
+
+                min_so_far = if (min_so_far != null) @min(min_so_far.?, res) else res;
             }
             const result_len = (std.fmt.bufPrint(result, "{}", .{min_so_far.?}) catch @panic("Buffer overflow")).len;
             return result[0..result_len];
         },
         CellFunction.Max => {
-            var max_so_far: ?f32 = null;
+            var max_so_far: ?f64 = null;
             var spliterator = std.mem.split(u8, unfolded_args, ",");
             while (spliterator.next()) |arg| {
-                const arg_i32 = std.fmt.parseFloat(f32, arg) catch {
-                    return std.fmt.bufPrint(result, "Error parsing argument {s}", .{arg}) catch @panic("Buffer overflow");
-                };
+                var inner_buf: [1024]u8 = undefined;
+                std.mem.copyForwards(u8, &inner_buf, arg);
+                inner_buf[arg.len] = 0; // ensure null-termination.
 
-                max_so_far = if (max_so_far != null) @max(max_so_far.?, arg_i32) else arg_i32;
+                const res = tinyexpr.te_interp(&inner_buf, 0);
+
+                max_so_far = if (max_so_far != null) @max(max_so_far.?, res) else res;
             }
             const result_len = (std.fmt.bufPrint(result, "{}", .{max_so_far.?}) catch @panic("Buffer overflow")).len;
             return result[0..result_len];
