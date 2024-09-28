@@ -61,11 +61,11 @@ pub const Cell = struct {
         var buffer2: [1024]u8 = undefined;
         const replacements = std.mem.replace(u8, self.raw_value.items, " ", "", &buffer);
         const unfolded_raw_value = unfold_range_exprs(buffer[0 .. self.raw_value.items.len - replacements], &buffer2);
-        const unfolded_function_value = unfold_function_refs(unfolded_raw_value, &buffer);
-        const refs = try self.find_references(unfolded_function_value);
+
+        const refs = try self.find_references(unfolded_raw_value);
         defer cells.allocator.free(refs);
 
-        try result_str.appendSlice(unfolded_function_value);
+        try result_str.appendSlice(unfolded_raw_value);
         var scratch_buf = std.ArrayList(u8).init(self.allocator);
 
         var offset: isize = 0;
@@ -87,7 +87,11 @@ pub const Cell = struct {
             }
             try result_str.appendSlice(scratch_buf.items);
         }
-
+        var new_buf: [1024]u8 = undefined;
+        std.mem.copyForwards(u8, &new_buf, result_str.items);
+        const unfolded_function_value = unfold_function_refs(result_str.items, &new_buf);
+        result_str.clearRetainingCapacity();
+        try result_str.appendSlice(unfolded_function_value);
         const refs_to_return = try cells.allocator.alloc(CellPos, refs.len);
         for (0..refs.len) |index| {
             refs_to_return[index] = refs[index][2];
@@ -832,8 +836,6 @@ test "replace_exprs_in_sum" {
     try std.testing.expectEqualStrings(expected_str, result[0]);
 }
 
-
-
 test "replace_exprs_in_sum_initted_cells" {
     const allocator = std.heap.c_allocator;
 
@@ -1076,7 +1078,7 @@ fn unfold_function(function: CellFunction, args: []const u8, result: []u8) ![]u8
     // example: unfold_function(CellFunction.Sum, "A1,A2,A3", result) -> "A1+A2+A3"
     // Note that to support nested functions, we need to parse the arguments and unfold them recursively
 
-    var buf: [32]u8 = undefined;
+    var buf: [1024]u8 = undefined;
     const unfolded_args = unfold_function_refs(args, &buf);
 
     switch (function) {
@@ -1091,10 +1093,10 @@ fn unfold_function(function: CellFunction, args: []const u8, result: []u8) ![]u8
             return result[0..result_len];
         },
         CellFunction.Min => {
-            var min_so_far: ?i32 = null;
+            var min_so_far: ?f32 = null;
             var spliterator = std.mem.split(u8, unfolded_args, ",");
             while (spliterator.next()) |arg| {
-                const arg_i32 = std.fmt.parseInt(i32, arg, 10) catch {
+                const arg_i32 = std.fmt.parseFloat(f32, arg) catch {
                     return std.fmt.bufPrint(result, "Error parsing argument {s}", .{arg}) catch @panic("Buffer overflow");
                 };
 
@@ -1104,10 +1106,10 @@ fn unfold_function(function: CellFunction, args: []const u8, result: []u8) ![]u8
             return result[0..result_len];
         },
         CellFunction.Max => {
-            var max_so_far: ?i32 = null;
+            var max_so_far: ?f32 = null;
             var spliterator = std.mem.split(u8, unfolded_args, ",");
             while (spliterator.next()) |arg| {
-                const arg_i32 = std.fmt.parseInt(i32, arg, 10) catch {
+                const arg_i32 = std.fmt.parseFloat(f32, arg) catch {
                     return std.fmt.bufPrint(result, "Error parsing argument {s}", .{arg}) catch @panic("Buffer overflow");
                 };
 
