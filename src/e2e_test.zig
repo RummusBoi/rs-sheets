@@ -5,6 +5,9 @@ const StandardEventPoller = @import("main_loop.zig").StandardEventPoller;
 const sheet_window = @import("sheet_window.zig");
 const WindowState = @import("window_state.zig").WindowState;
 const sheet = @import("sheet.zig");
+const CellCoords = @import("selection.zig").CellCoords;
+const Area = @import("selection.zig").Area;
+
 const get_cstr_len = @import("helpers.zig").get_cstr_len;
 pub const TestStep = struct {
     events: []const sheet_window.c.SDL_Event,
@@ -320,7 +323,7 @@ const TestSelectedCell = struct {
             return err;
         };
 
-        std.testing.expectEqual(sheet.CellCoords{ .x = 4, .y = 4 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 4, .y = 4 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -377,7 +380,7 @@ const TestMovingDuringEdit = struct {
             std.debug.print("Expected to be editing after clicking cell.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 5, .y = 6 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 5, .y = 6 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -420,7 +423,7 @@ const TestKeyboardNavigation = struct {
             std.debug.print("Expected to be editing after clicking cell.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 4, .y = 4 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 4, .y = 4 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -451,7 +454,7 @@ const TestOutOfBoundKeyboard = struct {
             std.debug.print("Expected to be editing after clicking cell.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 0, .y = 0 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 0, .y = 0 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -482,7 +485,7 @@ const TestAreaSelectClearsCell = struct {
             std.debug.print("Expected to not be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.Area{ .x = 1, .y = 1, .w = 5, .h = 5 }, app.selection_mode.Area) catch |err| {
+        std.testing.expectEqual(Area{ .x = 1, .y = 1, .w = 5, .h = 5 }, app.selection_mode.Area) catch |err| {
             std.debug.print("Expected selected area to be set.\n", .{});
             return err;
         };
@@ -514,7 +517,7 @@ const TestAreaSelectUpperLeft = struct {
             std.debug.print("Expected to not be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.Area{ .x = 0, .y = 0, .w = -1, .h = -1 }, app.selection_mode.Area) catch |err| {
+        std.testing.expectEqual(Area{ .x = 0, .y = 0, .w = -1, .h = -1 }, app.selection_mode.Area) catch |err| {
             std.debug.print("Expected selected area to be set.\n", .{});
             return err;
         };
@@ -544,7 +547,7 @@ const TestSelectCellClearsArea = struct {
             std.debug.print("Expected to not be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 0, .y = 0 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 0, .y = 0 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -573,7 +576,7 @@ const TestSelectAreaBackspace = struct {
             return err;
         };
         std.debug.print("Area: {d}, {d}, {d}, {d}\n", .{ app.selection_mode.Area.x, app.selection_mode.Area.y, app.selection_mode.Area.w, app.selection_mode.Area.h });
-        std.testing.expectEqual(sheet.Area{ .x = 5, .y = 10, .w = 2, .h = 2 }, app.selection_mode.Area) catch |err| {
+        std.testing.expectEqual(Area{ .x = 5, .y = 10, .w = 2, .h = 2 }, app.selection_mode.Area) catch |err| {
             std.debug.print("Expected selected area to be set.\n", .{});
             return err;
         };
@@ -608,7 +611,7 @@ const TestSelectAreaBackspaceReverse = struct {
             std.debug.print("Expected to not be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.Area{ .x = 6, .y = 11, .w = -2, .h = -2 }, app.selection_mode.Area) catch |err| {
+        std.testing.expectEqual(Area{ .x = 6, .y = 11, .w = -2, .h = -2 }, app.selection_mode.Area) catch |err| {
             std.debug.print("Expected selected area to be null.\n", .{});
             return err;
         };
@@ -645,7 +648,7 @@ const TestArrowAfterAreaSelect = struct {
             std.debug.print("Expected to not be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 5, .y = 6 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 5, .y = 6 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -672,7 +675,7 @@ const TestArrowAfterAreaSelect2 = struct {
             std.debug.print("Expected to not be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 1, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 1, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -699,7 +702,7 @@ const TestEnterAfterAreaSelect = struct {
             std.debug.print("Expected to not be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 5, .y = 5 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 5, .y = 5 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -726,7 +729,7 @@ const TestEnterAfterAreaSelect2 = struct {
             std.debug.print("Expected to be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 1, .y = 1 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 1, .y = 1 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -753,7 +756,7 @@ const TestTextInputAfterAreaSelect = struct {
             std.debug.print("Expected to be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 1, .y = 1 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 1, .y = 1 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -789,7 +792,7 @@ const TestCopySelectedCell = struct {
             std.debug.print("Expected to be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 2, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 2, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -834,7 +837,7 @@ const TestCopyPasteSelectedCellNoEdit = struct {
             std.debug.print("Expected to be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 3, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 3, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -870,7 +873,7 @@ const TestCopyPasteSelectedCellWithEdit = struct {
             std.debug.print("Expected to be editing.\n", .{});
             return err;
         };
-        std.testing.expectEqual(sheet.CellCoords{ .x = 3, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
+        std.testing.expectEqual(CellCoords{ .x = 3, .y = 2 }, app.selection_mode.SingleCell) catch |err| {
             std.debug.print("Expected selected cell to be set.\n", .{});
             return err;
         };
@@ -954,7 +957,7 @@ const TestCopyPasteArea = struct {
         try std.testing.expectEqualStrings("17", app.cells.find(3, 7).?.value.items);
         try std.testing.expectEqualStrings("18", app.cells.find(3, 8).?.value.items);
 
-        std.testing.expectEqual(sheet.Area{ .x = 2, .y = 5, .w = 2, .h = 4 }, app.selection_mode.Area) catch |err| {
+        std.testing.expectEqual(Area{ .x = 2, .y = 5, .w = 2, .h = 4 }, app.selection_mode.Area) catch |err| {
             std.debug.print("Expected selected area to be set.\n", .{});
             return err;
         };

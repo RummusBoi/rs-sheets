@@ -10,6 +10,8 @@ const CellContainer = @import("cell.zig").CellContainer;
 const constants = @import("constants.zig");
 const helpers = @import("helpers.zig");
 const std = @import("std");
+const CellCoords = @import("selection.zig").CellCoords;
+const Area = @import("selection.zig").Area;
 
 pub fn cell_to_pixel(
     cell_x: i32,
@@ -170,24 +172,3 @@ pub fn render_column_labels(state: *const WindowState, sheet_window: *SheetWindo
         try sheet_window.draw_column_label(buf[0..label_len], x, is_selected);
     }
 }
-
-// returns index to cell with the given coordinates
-
-pub const CellCoords = struct {
-    x: i32,
-    y: i32,
-};
-
-pub const Area = struct {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-};
-
-pub const Direction = enum {
-    Up,
-    Right,
-    Down,
-    Left,
-};

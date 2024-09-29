@@ -12,6 +12,13 @@ const read_cells_from_csv_file = @import("fileparser.zig").read_cells_from_csv_f
 const write_cells_to_csv_file = @import("fileparser.zig").write_cells_to_csv_file;
 const WindowState = @import("window_state.zig").WindowState;
 const get_cstr_len = @import("helpers.zig").get_cstr_len;
+const selection = @import("selection.zig");
+const CellCoords = selection.CellCoords;
+const Area = selection.Area;
+const SelectionMode = selection.SelectionMode;
+const update_area = selection.update_area;
+const Direction = selection.Direction;
+
 pub const EventPoller = struct {
     poll_event_fn: *const fn (event_poller: *EventPoller, event: [*c]sheet_window.c.SDL_Event) c_int,
 
@@ -33,12 +40,6 @@ pub const StandardEventPoller = struct {
     }
 };
 
-const SelectionMode = union(enum) {
-    Nothing: void,
-    SingleCell: sheet.CellCoords,
-    Area: sheet.Area,
-};
-
 pub const SpreadSheetApp = struct {
     cells: CellContainer,
     display: sheet_window.SheetWindow,
@@ -54,6 +55,7 @@ pub const SpreadSheetApp = struct {
     left_button_is_down: bool = false,
     is_holding_shift: bool = false,
     is_holding_cmd: bool = false,
+    is_holding_opt: bool = false,
     is_editing: bool = false,
     update_selected_area: bool = false,
     event_was_polled: bool = false,
@@ -327,7 +329,7 @@ pub const SpreadSheetApp = struct {
                 },
                 sheet_window.c.SDL_TEXTINPUT => {
                     self.cell_was_updated = true; // we flip the bool here to ensure that we always update the cell when we get text input.
-                    const selected_cell_coords: sheet.CellCoords = switch (self.selection_mode) {
+                    const selected_cell_coords: CellCoords = switch (self.selection_mode) {
                         SelectionMode.SingleCell => |cell_coords| blk: {
                             if (!self.is_editing) {
                                 self.is_editing = true;
@@ -466,6 +468,8 @@ pub const SpreadSheetApp = struct {
                         if (self.is_holding_cmd) self.handle_paste();
                     } else if (scancode == sheet_window.c.SDL_SCANCODE_LGUI) {
                         self.is_holding_cmd = true;
+                    } else if (scancode == sheet_window.c.SDL_SCANCODE_LALT) {
+                        self.is_holding_opt = true;
                     }
                 },
                 sheet_window.c.SDL_KEYUP => {
@@ -476,6 +480,9 @@ pub const SpreadSheetApp = struct {
                     }
                     if (scancode == sheet_window.c.SDL_SCANCODE_LGUI) {
                         self.is_holding_cmd = false;
+                    }
+                    if (scancode == sheet_window.c.SDL_SCANCODE_LALT) {
+                        self.is_holding_opt = false;
                     }
                 },
                 sheet_window.c.SDL_WINDOWEVENT => {
@@ -536,23 +543,9 @@ pub const SpreadSheetApp = struct {
                     };
                 }
             },
-            SelectionMode.Area => |*area| {
+            SelectionMode.Area => |area| {
                 if (self.is_holding_shift) {
-                    area.w += move_x;
-                    area.h += move_y;
-                    if (area.x + area.w < -1) {
-                        area.w = -area.x - 1;
-                    }
-
-                    if (area.w == 0) {
-                        area.w += 2 * move_x;
-                    }
-                    if (area.h == 0) {
-                        area.h += 2 * move_y;
-                    }
-                    if (area.y + area.h < -1) {
-                        area.h = -area.y - 1;
-                    }
+                    update_area(&self.selection_mode.Area, Direction.from_sdl_scancode(scancode));
                 } else {
                     self.selection_mode = .{ .SingleCell = .{ .x = move_x + area.x + (if (area.w > 0) area.w - 1 else area.w + 1), .y = move_y + area.y + if (area.h > 0) area.h - 1 else area.h + 1 } };
                     _ = self.cells.ensure_cell(self.selection_mode.SingleCell.x, self.selection_mode.SingleCell.y) catch {
@@ -561,6 +554,28 @@ pub const SpreadSheetApp = struct {
                     };
                 }
             },
+            // .EquationDependency => |*eq_dep| {
+            //     if (!self.is_holding_opt) return;
+
+            //     // we are holding opt, so we should change the current dependency.
+            //     if (eq_dep.current_dependency) |ind| {
+            //         if (self.is_holding_shift) {
+            //             update_area(&eq_dep.dependencies[ind], Direction.from_sdl_scancode(scancode));
+            //         } else {
+            //             eq_dep.dependencies[ind].x += move_x;
+            //             eq_dep.dependencies[ind].y += move_y;
+            //             // if (dependency.x + move_x < 0 or dependency.y + move_y < 0) return;
+            //             // if (dependency.x + dependency.w + move_x < 0 or dependency.y + dependency.h + move_y < 0) return;
+            //             // dependency.x += move_x;
+            //             // dependency.y += move_y;
+            //         }
+            //     } else {
+            //         // add a new dependency
+            //         eq_dep._dep_buffer[eq_dep.dependencies.len] = Area{ .x = move_x + eq_dep.equation_cell.x, .y = move_y + eq_dep.equation_cell.y, .w = 1, .h = 1 };
+            //         eq_dep.current_dependency = eq_dep.dependencies.len;
+            //     }
+            // },
+            else => return,
         }
     }
 
@@ -625,7 +640,7 @@ pub const SpreadSheetApp = struct {
 
     fn handle_paste(self: *SpreadSheetApp) void {
         self.update_selected_area = true;
-        const cell_coords: sheet.CellCoords = switch (self.selection_mode) {
+        const cell_coords: CellCoords = switch (self.selection_mode) {
             .SingleCell => |cell_coords| cell_coords,
             .Area => |area| .{ .x = area.x, .y = area.y },
             else => return,
@@ -637,7 +652,7 @@ pub const SpreadSheetApp = struct {
         var c_str_slice: []u8 = undefined;
         c_str_slice.ptr = clipboard;
         c_str_slice.len = get_cstr_len(clipboard);
-        var curr_cell_coords: sheet.CellCoords = .{ .x = cell_coords.x, .y = cell_coords.y };
+        var curr_cell_coords: CellCoords = .{ .x = cell_coords.x, .y = cell_coords.y };
         var curr_cell: *Cell = self.cells.ensure_cell(curr_cell_coords.x, curr_cell_coords.y) catch {
             std.debug.print("Failed when ensure that cell existed.", .{});
             return;
